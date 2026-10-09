@@ -40,7 +40,7 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? 'Date unavailable' : new Intl.DateTimeFormat('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }).format(date);
 }
 function resultSlug(item) {
-  return new URL(item.url).pathname.split('/').filter(Boolean).pop() || 'result';
+  return decodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop() || 'result');
 }
 function filePreviewUrl(value) {
   try {

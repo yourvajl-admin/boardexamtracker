@@ -149,14 +149,15 @@ app.post('/api/admin/test-latest-result', requireAdmin, async (req, res) => {
     if (!officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) {
       return res.status(503).json({ error: 'The latest result does not have a valid official PRC link.' });
     }
+    const resultUrl = boardResultPageUrl(publicBaseUrl(), latest);
     const title = escapeEmailHtml(latest.title);
     const date = escapeEmailHtml(latest.date);
     const description = escapeEmailHtml(latest.description || 'A new examination result announcement is available from the official source.');
     await sendEmail({
       to: email,
       subject: `Test alert: ${String(latest.title).replace(/[\r\n]+/g, ' ').slice(0, 180)}`,
-      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><p style="color:#2563a9;font-weight:bold">BoardExamTracker · Test email</p><h1 style="font-size:22px">${title}</h1><p><strong>Release date:</strong> ${date}</p><p>${description}</p><p><a href="${escapeEmailHtml(officialUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">View official result</a></p><p style="font-size:12px;color:#718097">This is a one-time test sent only to the address you entered. BoardExamTracker is independent and is not affiliated with PRC.</p></div>`,
-      text: `BoardExamTracker test email\n\n${latest.title}\nRelease date: ${latest.date}\n\n${latest.description || 'A new examination result announcement is available from the official source.'}\n\nOfficial result: ${officialUrl}\n\nThis test was sent only to the address you entered.`,
+      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><p style="color:#2563a9;font-weight:bold">BoardExamTracker · Test email</p><h1 style="font-size:22px">${title}</h1><p><strong>Release date:</strong> ${date}</p><p>${description}</p><p><a href="${escapeEmailHtml(resultUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">View result on BoardExamTracker</a></p><p style="font-size:12px;color:#718097">The official PRC source is available from the result page. This is a one-time test sent only to the address you entered. BoardExamTracker is independent and is not affiliated with PRC.</p></div>`,
+      text: `BoardExamTracker test email\n\n${latest.title}\nRelease date: ${latest.date}\n\n${latest.description || 'A new examination result announcement is available from the official source.'}\n\nView this result on BoardExamTracker: ${resultUrl}\n\nThe official PRC source is available from the result page. This test was sent only to the address you entered.`,
     });
     return res.json({ sent: true, title: latest.title });
   } catch (error) {
@@ -241,12 +242,20 @@ function publicBaseUrl() {
   return process.env.PUBLIC_BASE_URL.replace(/\/$/, '');
 }
 
+function boardResultPageUrl(baseUrl, result) {
+  const officialUrl = normalizeUrl(result.url);
+  if (!officialUrl) return `${baseUrl}/#latest`;
+  const pathParts = new URL(officialUrl).pathname.split('/').filter(Boolean);
+  const slug = decodeURIComponent(pathParts[pathParts.length - 1] || 'result');
+  return `${baseUrl}/results/${encodeURIComponent(slug)}`;
+}
+
 async function notifySubscribers(results) {
   const subscribers = await listConfirmedSubscribers();
   if (!subscribers.length) return;
   const baseUrl = publicBaseUrl();
-  const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(result.url)}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
-  const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${result.url}`).join('\n');
+  const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(boardResultPageUrl(baseUrl, result))}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
+  const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${boardResultPageUrl(baseUrl, result)}`).join('\n');
   const deliveries = await Promise.allSettled(subscribers.map(async (subscriber) => {
     const unsubscribeUrl = `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(subscriber.unsubscribeToken)}`;
     await sendEmail({
