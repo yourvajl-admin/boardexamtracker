@@ -116,6 +116,54 @@ app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
   }
 });
+const adminTestEmailAttempts = new Map();
+app.post('/api/admin/test-latest-result', requireAdmin, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+    return res.status(400).json({ error: 'Enter a valid email address.' });
+  }
+  if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
+
+  const now = Date.now();
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (adminTestEmailAttempts.get(ip) || []).filter((timestamp) => now - timestamp < 60 * 60 * 1000);
+  if (recent.length >= 3) return res.status(429).json({ error: 'Test email limit reached. Try again later.' });
+  recent.push(now);
+  adminTestEmailAttempts.set(ip, recent);
+
+  try {
+    let results;
+    try {
+      results = await fetchResults({ maxPage: 2 });
+    } catch (error) {
+      const cached = getCache();
+      if (!cached?.results?.length) throw error;
+      results = cached.results;
+    }
+    const latest = results
+      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (!latest) return res.status(503).json({ error: 'No current result announcement is available to send.' });
+
+    const officialUrl = normalizeUrl(latest.url);
+    if (!officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) {
+      return res.status(503).json({ error: 'The latest result does not have a valid official PRC link.' });
+    }
+    const title = escapeEmailHtml(latest.title);
+    const date = escapeEmailHtml(latest.date);
+    const description = escapeEmailHtml(latest.description || 'A new examination result announcement is available from the official source.');
+    await sendEmail({
+      to: email,
+      subject: `Test alert: ${String(latest.title).replace(/[\r\n]+/g, ' ').slice(0, 180)}`,
+      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><p style="color:#2563a9;font-weight:bold">BoardExamTracker · Test email</p><h1 style="font-size:22px">${title}</h1><p><strong>Release date:</strong> ${date}</p><p>${description}</p><p><a href="${escapeEmailHtml(officialUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">View official result</a></p><p style="font-size:12px;color:#718097">This is a one-time test sent only to the address you entered. BoardExamTracker is independent and is not affiliated with PRC.</p></div>`,
+      text: `BoardExamTracker test email\n\n${latest.title}\nRelease date: ${latest.date}\n\n${latest.description || 'A new examination result announcement is available from the official source.'}\n\nOfficial result: ${officialUrl}\n\nThis test was sent only to the address you entered.`,
+    });
+    return res.json({ sent: true, title: latest.title });
+  } catch (error) {
+    console.error('Could not send latest-result test email:', error.message);
+    return res.status(502).json({ error: 'Could not send the test email. Check the email provider logs and try again.' });
+  }
+});
 app.post('/api/admin/subscribers/unsubscribe', requireAdmin, async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {

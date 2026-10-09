@@ -5,6 +5,8 @@ const dashboardStatus = document.querySelector('#dashboard-status');
 const subscriberRows = document.querySelector('#subscriber-rows');
 const subscriberEmpty = document.querySelector('#subscriber-empty');
 const searchInput = document.querySelector('#subscriber-search');
+const testAlertForm = document.querySelector('#test-alert-form');
+const testAlertStatus = document.querySelector('#test-alert-status');
 let subscribers = [];
 let viewerRefreshTimer = null;
 
@@ -147,6 +149,26 @@ loginForm.addEventListener('submit', async (event) => {
 });
 
 searchInput.addEventListener('input', renderSubscribers);
+
+testAlertForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = testAlertForm.querySelector('button');
+  const email = document.querySelector('#test-alert-email').value.trim();
+  button.disabled = true;
+  testAlertStatus.textContent = 'Preparing latest result email…';
+  try {
+    const data = await request('/api/admin/test-latest-result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    testAlertStatus.textContent = `Test alert sent to ${email}. Check your inbox and spam folder.`;
+  } catch (error) {
+    testAlertStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 document.querySelector('#logout-button').addEventListener('click', async () => {
   try { await request('/api/admin/logout', { method: 'POST' }); } catch { /* Signing out still returns to the login screen. */ }
