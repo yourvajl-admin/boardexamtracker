@@ -180,4 +180,5 @@ module.exports = {
   markConfirmationSent,
   removeSubscriber,
   removeSubscriberByEmail,
+  redisCommand,
 };

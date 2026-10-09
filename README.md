@@ -49,8 +49,9 @@ Set `PORT` to change the default port (3000). Email alerts use Resend and requir
 - `RESEND_API_KEY`: Resend API key.
 - `EMAIL_FROM`: sender address on a domain verified with Resend, configured for BoardExamTracker as `BoardExamTracker <alerts@boardexamtracker.com>`.
 - `PUBLIC_BASE_URL`: public HTTPS site URL used in confirmation and unsubscribe links (for local development, `http://localhost:3000` is accepted).
+- `CRON_SECRET`: long random secret protecting the scheduled result-check endpoint; add the same value to GitHub Actions as `BOARD_EXAMTRACKER_CRON_SECRET`.
 
-Copy `.env.example` to `.env`, fill in those values, then restart the server. Without them, the signup form reports that email alerts are unavailable and does not accept subscriptions. The first full archive load establishes the baseline and does not send a large batch of old results; alerts are sent for announcements discovered on later five-minute checks. Subscriber addresses and confirmation tokens are stored in the ignored `data/email-subscribers.json` file, so keep that directory on persistent private storage and include it in protected backups. The user confirms subscription by email, and each alert contains an unsubscribe link.
+Copy `.env.example` to `.env`, fill in those values, then restart the server. Without email configuration, the signup form reports that email alerts are unavailable. In production, the GitHub Actions workflow checks the official feed every five minutes and stores known announcements in Upstash Redis. Its first run establishes the baseline without emailing old results; later new announcements are sent to confirmed subscribers. Add the same `CRON_SECRET` value to Vercel and to GitHub under Settings → Secrets and variables → Actions as `BOARD_EXAMTRACKER_CRON_SECRET`. GitHub may delay scheduled runs during busy periods. The user confirms subscription by email, and each alert contains an unsubscribe link.
 
 ## Private admin page
 

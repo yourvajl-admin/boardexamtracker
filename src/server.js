@@ -2,6 +2,7 @@ require('./env').loadLocalEnv();
 
 const express = require('express');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
@@ -16,11 +17,14 @@ const {
   markConfirmationSent,
   removeSubscriber,
   removeSubscriberByEmail,
+  redisCommand,
 } = require('./subscriptions');
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
+const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 let pendingFetch = null;
 const announcementCache = new Map();
 app.disable('x-powered-by');
@@ -222,12 +226,8 @@ async function refresh() {
     pendingFetch = fetchResults(options)
       .then((latest) => {
         if (!cached) return setCache(latest);
-        const knownUrls = new Set(cached.results.map((result) => result.url));
-        const newResults = latest.filter((result) => !knownUrls.has(result.url));
         const merged = new Map([...latest, ...cached.results].map((result) => [result.url, result]));
-        const updated = setCache([...merged.values()].sort((a, b) => b.date.localeCompare(a.date)));
-        if (newResults.length) notifySubscribers(newResults).catch((error) => console.error('Could not send new-result email alerts:', error.message));
-        return updated;
+        return setCache([...merged.values()].sort((a, b) => b.date.localeCompare(a.date)));
       })
       .finally(() => { pendingFetch = null; });
   }
@@ -252,7 +252,7 @@ function boardResultPageUrl(baseUrl, result) {
 
 async function notifySubscribers(results) {
   const subscribers = await listConfirmedSubscribers();
-  if (!subscribers.length) return;
+  if (!subscribers.length) return { recipients: 0, failed: 0 };
   const baseUrl = publicBaseUrl();
   const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(boardResultPageUrl(baseUrl, result))}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
   const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${boardResultPageUrl(baseUrl, result)}`).join('\n');
@@ -267,6 +267,7 @@ async function notifySubscribers(results) {
   }));
   const failures = deliveries.filter((delivery) => delivery.status === 'rejected').length;
   if (failures) console.error(`Email delivery failed for ${failures} subscriber(s).`);
+  return { recipients: subscribers.length, failed: failures };
 }
 
 function emailActionPage(title, message, token, action, buttonText) {
@@ -295,6 +296,53 @@ app.get('/api/notifications/status', (_req, res) => {
     available: emailReady && persistentStorageReady,
     reason: !emailReady ? 'email' : !persistentStorageReady ? 'storage' : null,
   });
+});
+
+app.get('/api/cron/check-results', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  if (!isPersistentStorageConfigured()) return res.status(503).json({ error: 'Persistent result tracking is not configured.' });
+  if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
+
+  try {
+    const lock = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, randomUUID(), 'NX', 'EX', 240);
+    if (lock !== 'OK') return res.json({ skipped: true, reason: 'A result check is already running.' });
+
+    const latest = (await fetchResults({ maxPage: 2 }))
+      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    if (!latest.length) return res.status(502).json({ error: 'No results could be read from the official PRC page.' });
+
+    const saved = await redisCommand('GET', KNOWN_RESULTS_KEY);
+    if (typeof saved !== 'string') {
+      await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
+      setCache(latest);
+      return res.json({ initialized: true, newResults: 0, message: 'Saved current results as the notification baseline.' });
+    }
+
+    let knownUrls;
+    try {
+      const decoded = JSON.parse(saved);
+      if (!Array.isArray(decoded) || decoded.some((url) => typeof url !== 'string')) throw new Error('Invalid notification baseline.');
+      knownUrls = new Set(decoded);
+    } catch {
+      await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
+      setCache(latest);
+      return res.json({ initialized: true, newResults: 0, message: 'Rebuilt the notification baseline.' });
+    }
+    const newResults = latest.filter((result) => !knownUrls.has(result.url));
+    const delivery = newResults.length ? await notifySubscribers(newResults) : { recipients: 0, failed: 0 };
+    if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
+    const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
+    await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
+    setCache(latest);
+    return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed });
+  } catch (error) {
+    console.error('Scheduled PRC result check failed:', error.message);
+    return res.status(502).json({ error: 'Scheduled PRC result check failed.' });
+  }
 });
 
 app.post('/api/notifications/subscribe', async (req, res) => {
