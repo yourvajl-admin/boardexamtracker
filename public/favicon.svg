@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">BoardExamTracker mark</title>
+  <rect width="48" height="48" rx="14" fill="#173a72"/>
+  <path d="M14 8.5h13l8 8V34a4.5 4.5 0 0 1-4.5 4.5h-16A4.5 4.5 0 0 1 10 34V13a4.5 4.5 0 0 1 4-4.5Z" fill="#fff"/>
+  <path d="M27 9v7a2 2 0 0 0 2 2h6" fill="none" stroke="#8cb9e5" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m16 23 3.2 3.2L26 19.5" fill="none" stroke="#2872b8" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m19 31 3.4 3.4L32 25" fill="none" stroke="#2bb797" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

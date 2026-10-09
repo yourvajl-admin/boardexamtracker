@@ -1,0 +1,85 @@
+:root[data-theme="dark"]{color-scheme:dark;--navy:#e4edf8;--blue:#82bdf0;--blue2:#9acdf4;--ink:#e5edf7;--muted:#a0afc1;--line:#304158;--paper:#111c2c;--mint:#173a38}
+:root[data-theme="dark"] body{background:#101a29;color:#e5edf7}
+:root[data-theme="dark"] .site-header{background:rgba(15,25,40,.95);border-color:#27364b}
+:root[data-theme="dark"] .nav-links a{color:#b4c1d1}
+:root[data-theme="dark"] .nav-links a:hover,:root[data-theme="dark"] .nav-links a:focus-visible{color:#9acdf4}
+:root[data-theme="dark"] .header-search,:root[data-theme="dark"] .theme-toggle{border-color:#354760;background:#172438;color:#d5e3f1}
+:root[data-theme="dark"] .header-search:hover,:root[data-theme="dark"] .theme-toggle:hover{background:#21344c}
+:root[data-theme="dark"] .menu-toggle{border-color:#354760;background:#172438}
+:root[data-theme="dark"] .menu-toggle span{background:#d5e3f1}
+:root[data-theme="dark"] .nav-links.open{background:#111c2c;border-color:#304158}
+:root[data-theme="dark"] .nav-links a{border-color:#26364b}
+:root[data-theme="dark"] .hero h1,:root[data-theme="dark"] .section-heading h2,:root[data-theme="dark"] .results-guide-section h2,:root[data-theme="dark"] .about-section h2,:root[data-theme="dark"] .legal-page h1{color:#e8f0fa}
+:root[data-theme="dark"] .hero-lede,:root[data-theme="dark"] .section-heading p,:root[data-theme="dark"] .card-subtitle,:root[data-theme="dark"] .card-description,:root[data-theme="dark"] .side-footnote,:root[data-theme="dark"] .results-guide-grid p,:root[data-theme="dark"] .results-guide-note,:root[data-theme="dark"] .about-section p,:root[data-theme="dark"] .legal-page p{color:#a6b5c7}
+:root[data-theme="dark"] .hero-card,:root[data-theme="dark"] .floating-note,:root[data-theme="dark"] .search-form,:root[data-theme="dark"] .result-card,:root[data-theme="dark"] .side-card,:root[data-theme="dark"] .load-more,:root[data-theme="dark"] .profession-cards>a,:root[data-theme="dark"] .results-guide-grid article,:root[data-theme="dark"] .result-dialog,:root[data-theme="dark"] .disclaimer-dialog,:root[data-theme="dark"] .detail-shell,:root[data-theme="dark"] .adsense-slot{background:#172438;border-color:#2c3d54;color:#e5edf7}
+:root[data-theme="dark"] .hero-card{background:linear-gradient(150deg,#192a40 40%,#142236);box-shadow:0 24px 50px rgba(0,0,0,.28)}
+:root[data-theme="dark"] .hero-feature-title,:root[data-theme="dark"] .side-heading h3,:root[data-theme="dark"] .official-card h3,:root[data-theme="dark"] .profession-cards b,:root[data-theme="dark"] .results-guide-grid h3,:root[data-theme="dark"] .embedded-document h3{color:#e0ebf7}
+:root[data-theme="dark"] .hero-card-foot,:root[data-theme="dark"] .floating-note small,:root[data-theme="dark"] .profession-cards small,:root[data-theme="dark"] .legal-page .legal-updated{color:#9aabc0}
+:root[data-theme="dark"] .hero-lines span{background:#33465e}
+:root[data-theme="dark"] .orbit{border-color:#25374d}
+:root[data-theme="dark"] .trust-strip,:root[data-theme="dark"] .professions-section,:root[data-theme="dark"] .results-guide-section,:root[data-theme="dark"] .detail-page{background:#121e2e;border-color:#293a51}
+:root[data-theme="dark"] .results-guide-section+.results-guide-section{background:#142135;border-color:#2b3b51}
+:root[data-theme="dark"] .results-toolbar{color:#aebccd}
+:root[data-theme="dark"] .filter{border-color:#34465d;background:#172438;color:#b9c7d6}
+:root[data-theme="dark"] .filter.active{border-color:#347bb8;background:#1d4264;color:#e3f2ff}
+:root[data-theme="dark"] .select-wrap select,:root[data-theme="dark"] .search-form input{background:#172438;color:#e5edf7}
+:root[data-theme="dark"] .select-wrap select{border-color:#34465d}
+:root[data-theme="dark"] .result-card{box-shadow:0 8px 24px rgba(0,0,0,.12)}
+:root[data-theme="dark"] .result-card h3{color:#e5edf7}
+:root[data-theme="dark"] .card-meta{border-color:#2d3e54;color:#9eafc2}
+:root[data-theme="dark"] .official-card{background:linear-gradient(145deg,#172c41,#172438);border-color:#30465d}
+:root[data-theme="dark"] .official-card p,:root[data-theme="dark"] .disclaimer-small{color:#a4b3c5}
+:root[data-theme="dark"] .official-card>a,:root[data-theme="dark"] .popular-list>a{border-color:#2c3d53}
+:root[data-theme="dark"] .popular-list b{color:#d7e3f0}
+:root[data-theme="dark"] .profession-cards>a:hover{border-color:#4a7196}
+:root[data-theme="dark"] .about-mark{background:transparent}
+:root[data-theme="dark"] .results-guide-grid article{background:#172438}
+:root[data-theme="dark"] .results-guide-grid article>span{color:#8ec7f4}
+:root[data-theme="dark"] .dialog-divider,:root[data-theme="dark"] .detail-documents{border-color:#2c3e54}
+:root[data-theme="dark"] .dialog-summary,:root[data-theme="dark"] .dialog-excerpts li,:root[data-theme="dark"] .detail-summary{color:#dbe5f0}
+:root[data-theme="dark"] .dialog-date,:root[data-theme="dark"] .detail-date,:root[data-theme="dark"] .dialog-attribution{color:#9bacc0}
+:root[data-theme="dark"] .dialog-close{border-color:#34475e;background:#1a2a40;color:#dce8f4}
+:root[data-theme="dark"] .embedded-document iframe{border-color:#35475e;background:#0d1725}
+:root[data-theme="dark"] .preview-unavailable,:root[data-theme="dark"] .dialog-empty,:root[data-theme="dark"] .empty-state{border-color:#35465c;color:#a7b6c8}
+:root[data-theme="dark"] .legal-page h2{color:#d9e7f5}
+:root[data-theme="dark"] .legal-page a,:root[data-theme="dark"] .about-section a{color:#8cc5f4}
+:root[data-theme="dark"] .email-alert-section{background:#142135;border-color:#293a51}
+:root[data-theme="dark"] .email-alert-form,:root[data-theme="dark"] .email-alert-form input{background:#172438;border-color:#34465d;color:#e5edf7}
+:root[data-theme="dark"] .email-alert-form label,:root[data-theme="dark"] .email-alert-form small{color:#a8b8ca}
+:root[data-theme="dark"] .site-footer{background:#0b1422}
+:root[data-theme="dark"] .skip-link{background:#172438;color:#e5edf7}
+.theme-toggle{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:8px;border:1px solid var(--line);border-radius:11px;background:#fff;color:#44617f;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
+.theme-toggle svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.theme-icon-sun{display:none}
+:root[data-theme="dark"] .theme-icon-sun{display:block}
+:root[data-theme="dark"] .theme-icon-moon{display:none}
+.theme-toggle:focus-visible{outline:3px solid #65a6df;outline-offset:2px}
+@media(max-width:760px){.header-inner{gap:8px}.brand-wordmark{width:190px}.theme-toggle{width:34px;height:34px;padding:7px}}
+@media(max-width:480px){.brand-wordmark{width:150px}.theme-toggle{width:32px;height:32px;padding:6px}}
+@media(prefers-reduced-motion:reduce){.theme-toggle{transition:none}}
+:root[data-theme="dark"] body :is(h1,h2,h3,h4,h5,h6,p,label,small,strong,b,li,span,button,a,summary,legend,dd,dt){color:#e2ebf5}
+:root[data-theme="dark"] body a,:root[data-theme="dark"] .about-section a,:root[data-theme="dark"] .legal-page a,:root[data-theme="dark"] .open-file-link,:root[data-theme="dark"] .detail-back{color:#8fcaff}
+:root[data-theme="dark"] .brand-wordmark{color:initial}
+:root[data-theme="dark"] .result-card,:root[data-theme="dark"] .side-card,:root[data-theme="dark"] .profession-cards>a,:root[data-theme="dark"] .results-guide-grid article,:root[data-theme="dark"] .floating-note,:root[data-theme="dark"] .load-more,:root[data-theme="dark"] .refresh-button,:root[data-theme="dark"] .profession-nav,:root[data-theme="dark"] .resource-link,:root[data-theme="dark"] .dialog-loading,:root[data-theme="dark"] .dialog-empty,:root[data-theme="dark"] .empty-state button{background:#172438;border-color:#30435a}
+:root[data-theme="dark"] .category-badge,:root[data-theme="dark"] .detail-category{background:#203d5a;color:#b9dcfa}
+:root[data-theme="dark"] .profession-icon,:root[data-theme="dark"] .prof-symbol,:root[data-theme="dark"] .side-icon,:root[data-theme="dark"] .mini-doc{background:#203b56;color:#a9d7ff}
+:root[data-theme="dark"] .profession-icon.mint,:root[data-theme="dark"] .prof-symbol.mint,:root[data-theme="dark"] .source-check{background:#173c39;color:#79e2c2}
+:root[data-theme="dark"] .profession-icon.gold,:root[data-theme="dark"] .prof-symbol.gold{background:#44391f;color:#f2cf79}
+:root[data-theme="dark"] .profession-icon.lilac,:root[data-theme="dark"] .prof-symbol.lilac{background:#352c4d;color:#c7adff}
+:root[data-theme="dark"] .profession-icon.sky,:root[data-theme="dark"] .prof-symbol.sky{background:#1d3b50;color:#8cd5f4}
+:root[data-theme="dark"] .profession-icon.rose,:root[data-theme="dark"] .prof-symbol.rose{background:#4b302f;color:#ffaaa0}
+:root[data-theme="dark"] .status-pill{background:#173c39;color:#8ce5c8}
+:root[data-theme="dark"] .note-icon{background:#44391f;color:#f4d27e}
+:root[data-theme="dark"] .new-badge,:root[data-theme="dark"] .trust-icon{color:#83e0c2}
+:root[data-theme="dark"] .live-dot{box-shadow:0 0 0 4px #193b37}
+:root[data-theme="dark"] .status-message{background:#3a321e;border-color:#665a35;color:#ffe09a}
+:root[data-theme="dark"] .status-message.error,:root[data-theme="dark"] .unavailable{background:#402a2a;border-color:#6c4141;color:#ffc0b9}
+:root[data-theme="dark"] .detail-source-note{background:#173630;color:#c0e7da}
+:root[data-theme="dark"] .detail-source-note>span{background:#205044;color:#9ce6cc}
+:root[data-theme="dark"] .source-check{background:#173c39;color:#79e2c2}
+:root[data-theme="dark"] .search-form input::placeholder,:root[data-theme="dark"] .email-alert-controls input::placeholder{color:#94a8bd}
+:root[data-theme="dark"] .menu-toggle,:root[data-theme="dark"] .theme-toggle{background:#172438}
+:root[data-theme="dark"] .result-dialog .dialog-resources .resource-link,:root[data-theme="dark"] .resource-link{color:#8fcaff}
+:root[data-theme="dark"] .result-dialog .dialog-resources .resource-link:hover,:root[data-theme="dark"] .resource-link:hover{background:#20344b}
+@media(max-width:760px){.header-search,.theme-toggle,.menu-toggle,.profession-nav{width:36px;height:36px;flex:none}.theme-toggle{padding:8px}.theme-toggle svg{width:18px;height:18px}.hero-card{transform:rotate(4deg) scale(.91)}}
+@media(max-width:480px){.refresh-button{display:inline-flex;align-items:center;gap:7px;padding:9px 12px;font-size:10px}.refresh-button span{font-size:14px}.header-search,.theme-toggle,.menu-toggle,.profession-nav{width:36px;height:36px}.theme-toggle{padding:8px}.theme-toggle svg{width:18px;height:18px}.profession-nav{display:grid;place-items:center}}
