@@ -83,7 +83,7 @@ function render() {
   empty.hidden = filtered.length !== 0;
   grid.hidden = filtered.length === 0;
   loadMore.hidden = visible.length >= filtered.length || filtered.length === 0;
-  grid.innerHTML = visible.map((item, index) => `<article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}" role="button" tabindex="0" aria-label="Open details for ${escapeHtml(item.title)}" data-open-result="${escapeHtml(item.url)}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">● Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div></article>`).join('');
+  grid.innerHTML = visible.map((item, index) => `<article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}" role="button" tabindex="0" aria-label="Open details for ${escapeHtml(item.title)}" data-open-result="${escapeHtml(item.url)}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div></article>`).join('');
   updateAdSlot();
 }
 function updateAdSlot() {
@@ -150,7 +150,7 @@ function renderProfessionCards() {
     const count = resultCounts.get(category) || 0;
     const initials = category.split(/\s+/).filter((word) => !['and', 'of', 'the'].includes(word.toLowerCase())).slice(0, 2).map((word) => word[0]).join('').toUpperCase();
     const countLabel = count ? `<small class="profession-result-count">${count} ${count === 1 ? 'result' : 'results'} available</small>` : '';
-    return `<a class="profession-card" href="#latest" data-profession-search="${escapeHtml(category)}" role="listitem" aria-label="Browse ${escapeHtml(category)} results${count ? `, ${count} available` : ''}"><span class="prof-symbol ${colorClasses[index % colorClasses.length]}">${escapeHtml(initials)}</span><b>${escapeHtml(category)}</b><small>Licensure exam results</small>${countLabel}<span class="profession-card-cta">View results <span aria-hidden="true">→</span></span><span class="card-arrow" aria-hidden="true">↗</span></a>`;
+    return `<a class="profession-card" href="#latest" data-profession-search="${escapeHtml(category)}" role="listitem" aria-label="Browse ${escapeHtml(category)} results${count ? `, ${count} available` : ''}"><span class="prof-symbol ${colorClasses[index % colorClasses.length]}">${escapeHtml(initials)}</span><b>${escapeHtml(category)}</b><small>Licensure exam results</small>${countLabel}<span class="profession-card-cta">View results <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></span></span><span class="card-arrow" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></span></a>`;
   }).join('');
   requestAnimationFrame(updateProfessionSlider);
 }
@@ -176,7 +176,7 @@ async function loadResults(refresh = false) {
   updateRefreshCountdown();
   const button = document.querySelector('#refresh-button');
   button.disabled = true;
-  button.querySelector('span').textContent = '↻';
+  button.querySelector('span').innerHTML = '<svg class="ui-icon refresh-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 1-2.3-5.7L20 9"/></svg>';
   grid.setAttribute('aria-busy', 'true');
   if (!state.results.length) count.textContent = 'Loading results…';
   try {
@@ -209,7 +209,7 @@ async function loadResults(refresh = false) {
   } catch (error) {
     renderProfessionCards();
     setNotice("We're having trouble connecting to the official PRC website. Please try again later. Visit PRC.gov.ph for current announcements.", 'error');
-    if (state.results.length) render(); else { count.textContent = 'Results unavailable'; grid.innerHTML = `<div class="unavailable"><strong>Unable to retrieve the latest PRC results.</strong><br><a href="${SOURCE_URL}" target="_blank" rel="noopener noreferrer">Visit PRC.gov.ph →</a></div>`; }
+    if (state.results.length) render(); else { count.textContent = 'Results unavailable'; grid.innerHTML = `<div class="unavailable"><strong>Unable to retrieve the latest PRC results.</strong><br><a href="${SOURCE_URL}" target="_blank" rel="noopener noreferrer">Visit PRC.gov.ph <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a></div>`; }
   } finally {
     button.disabled = false;
     grid.setAttribute('aria-busy', 'false');
@@ -251,7 +251,7 @@ grid.addEventListener('click', async (event) => {
     resources.innerHTML = data.resources?.length
       ? data.resources.map((resource, index) => {
         const preview = filePreviewUrl(resource.url);
-        return `<section class="embedded-document"><h3>${escapeHtml(resource.label)}</h3>${preview ? `<iframe src="${escapeHtml(preview)}" title="${escapeHtml(resource.label)} preview" loading="${index === 0 ? 'eager' : 'lazy'}" referrerpolicy="no-referrer" allow="fullscreen"></iframe>` : '<p class="preview-unavailable">Preview is unavailable for this file.</p>'}<a class="open-file-link" href="${escapeHtml(resource.url)}" target="_blank" rel="noopener noreferrer">Open file in a new tab ↗</a></section>`;
+        return `<section class="embedded-document"><h3>${escapeHtml(resource.label)}</h3>${preview ? `<iframe src="${escapeHtml(preview)}" title="${escapeHtml(resource.label)} preview" loading="${index === 0 ? 'eager' : 'lazy'}" referrerpolicy="no-referrer" allow="fullscreen"></iframe>` : '<p class="preview-unavailable">Preview is unavailable for this file.</p>'}<a class="open-file-link" href="${escapeHtml(resource.url)}" target="_blank" rel="noopener noreferrer">Open file in a new tab <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></section>`;
       }).join('')
       : '<p class="dialog-empty">No separate files were linked from this notice when we checked. Check the source announcement for any later additions.</p>';
   } catch {
@@ -279,18 +279,18 @@ async function renderDetail() {
   document.querySelectorAll('#main > *').forEach((section) => { section.hidden = section !== detail; });
   detail.hidden = false;
   if (!item) {
-    detail.innerHTML = '<a class="detail-back" href="/">← Back to latest results</a><h1>Result not found</h1><p>This announcement may no longer be listed in the latest PRC results feed.</p>';
+    detail.innerHTML = '<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><h1>Result not found</h1><p>This announcement may no longer be listed in the latest PRC results feed.</p>';
     return;
   }
   document.title = `${item.title} | BoardExamTracker`;
-  detail.innerHTML = `<a class="detail-back" href="/">← Back to latest results</a><div class="detail-shell"><div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p class="detail-summary">This page brings the result files associated with this notice together in one place. Use the document previews below to review the information, then confirm names and other important details in the source files.</p><div class="detail-source-note"><span>✓</span><p>Titles, release dates, and document links are indexed from public PRC notices. BoardExamTracker's summaries and navigation are independently written. The files are provided by their original source.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading links published with the announcement…</p></div></section></div>`;
+  detail.innerHTML = `<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><div class="detail-shell"><div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p class="detail-summary">This page brings the result files associated with this notice together in one place. Use the document previews below to review the information, then confirm names and other important details in the source files.</p><div class="detail-source-note"><span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg></span><p>Titles, release dates, and document links are indexed from public PRC notices. BoardExamTracker's summaries and navigation are independently written. The files are provided by their original source.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading links published with the announcement…</p></div></section></div>`;
   const resources = document.querySelector('#detail-resources');
   try {
     const response = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load announcement links.');
     resources.innerHTML = data.resources.length
-      ? data.resources.map((resource) => `<a class="resource-link" href="${escapeHtml(resource.url)}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(resource.label)}</span><b aria-hidden="true">↗</b></a>`).join('')
+      ? data.resources.map((resource) => `<a class="resource-link" href="${escapeHtml(resource.url)}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(resource.label)}</span><b aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></b></a>`).join('')
       : '<p class="dialog-empty">This announcement has no separate result document links. Check back later for updates.</p>';
   } catch {
     resources.innerHTML = '<p class="dialog-empty">Result document links could not be loaded. Return to the results list and try again later.</p>';
