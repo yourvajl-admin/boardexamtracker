@@ -39,9 +39,9 @@ app.get('/sitemap.xml', async (_req, res) => {
     const cached = isFresh() ? getCache() : null;
     const latest = cached?.results?.length ? cached : { results: await fetchResults({ maxPage: 0 }) };
     const urls = [
-      '<url><loc>https://boardexamtracker.com/</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>',
-      '<url><loc>https://boardexamtracker.com/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>',
-      ...latest.results.map((item) => `<url><loc>https://boardexamtracker.com/results/${encodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop())}</loc><lastmod>${item.date}</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>`),
+      '<url><loc>https://www.boardexamtracker.com/</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>',
+      '<url><loc>https://www.boardexamtracker.com/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>',
+      ...latest.results.map((item) => `<url><loc>https://www.boardexamtracker.com/results/${encodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop())}</loc><lastmod>${item.date}</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>`),
     ];
     res.type('application/xml').set('Cache-Control', 'public, max-age=300').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join('')}</urlset>`);
   } catch (error) {
@@ -531,10 +531,10 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/results/:slug', async (req, res) => {
   try {
     const html = await fs.readFile(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-    const canonical = `https://boardexamtracker.com/results/${encodeURIComponent(req.params.slug)}`;
+    const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(req.params.slug)}`;
     const page = html
-      .replace('rel="canonical" href="https://boardexamtracker.com/"', `rel="canonical" href="${canonical}"`)
-      .replace('property="og:url" content="https://boardexamtracker.com/"', `property="og:url" content="${canonical}"`);
+      .replace('rel="canonical" href="https://www.boardexamtracker.com/"', `rel="canonical" href="${canonical}"`)
+      .replace('property="og:url" content="https://www.boardexamtracker.com/"', `property="og:url" content="${canonical}"`);
     res.type('html').send(page);
   } catch {
     res.status(500).type('text/plain').send('Could not load the result page.');

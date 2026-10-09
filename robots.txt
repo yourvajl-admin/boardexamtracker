@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Allow: /ads.txt
 Disallow: /api/
-Sitemap: https://boardexamtracker.com/sitemap.xml
+Sitemap: https://www.boardexamtracker.com/sitemap.xml

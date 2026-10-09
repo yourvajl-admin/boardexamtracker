@@ -3,4 +3,4 @@ Allow: /
 Disallow: /api/
 Disallow: /admin
 
-Sitemap: https://boardexamtracker.com/sitemap.xml
+Sitemap: https://www.boardexamtracker.com/sitemap.xml

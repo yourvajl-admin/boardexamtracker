@@ -336,7 +336,7 @@ async function renderDetail() {
     detail.innerHTML = '<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><h1>Result not found</h1><p>This announcement may no longer be listed in the latest PRC results feed.</p>';
     return;
   }
-  const detailUrl = `https://boardexamtracker.com/results/${encodeURIComponent(slug)}`;
+  const detailUrl = `https://www.boardexamtracker.com/results/${encodeURIComponent(slug)}`;
   const description = (item.description || `View the ${item.category || 'professional licensure'} result brief and documents linked to this PRC announcement.`).slice(0, 300);
   document.title = `${item.title} | BoardExamTracker`;
   document.querySelector('meta[name="description"]')?.setAttribute('content', description);
