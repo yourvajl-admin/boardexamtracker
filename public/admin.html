@@ -32,12 +32,12 @@
       <a class="back-link" href="/">Return to BoardExamTracker</a>
     </section>
     <section id="dashboard-view" class="admin-panel" hidden>
-      <div class="dashboard-top"><div><p class="eyebrow">PRIVATE ADMIN AREA</p><h1>Subscribers</h1><p>Search the alert list or manually unsubscribe someone who asks.</p></div><button id="logout-button" class="secondary-button" type="button">Sign out</button></div>
+      <div class="dashboard-top"><div><p class="eyebrow">PRIVATE ADMIN AREA</p><h1>Subscribers</h1><p>Search the alert list, resend the latest result to a confirmed subscriber, or manually unsubscribe someone who asks.</p></div><button id="logout-button" class="secondary-button" type="button">Sign out</button></div>
       <section class="viewer-panel" aria-live="polite"><div><span class="live-dot"></span><strong>Viewers online now</strong></div><strong id="viewer-count" class="viewer-number">—</strong><small id="viewer-status">Checking live viewer count…</small></section>
       <section class="test-alert-panel" aria-labelledby="test-alert-heading"><h2 id="test-alert-heading">Test an email alert</h2><p>Send the latest result to your own inbox only. This one-time test will not email other subscribers.</p><form id="test-alert-form"><label for="test-alert-email">Your email address</label><input id="test-alert-email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"><button type="submit">Send latest result test</button><p id="test-alert-status" class="status" role="status" aria-live="polite"></p></form></section>
       <p id="dashboard-status" class="notice" role="status" aria-live="polite" hidden></p>
       <div class="subscriber-toolbar"><label for="subscriber-search">Search subscriber emails</label><input id="subscriber-search" type="search" placeholder="Search by email address…" autocomplete="off"><span id="subscriber-count" class="subscriber-count" aria-live="polite"></span></div>
-      <div class="table-scroll"><table><thead><tr><th scope="col">Email address</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscriber emails match this search.</p></div>
+      <div class="table-scroll"><table><thead><tr><th scope="col">Email address</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Subscriber actions</span></th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscriber emails match this search.</p></div>
       <a class="back-link" href="/">Return to the public website</a>
     </section>
     <footer>BoardExamTracker is an independent results information platform.</footer>

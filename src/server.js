@@ -169,6 +169,50 @@ app.post('/api/admin/test-latest-result', requireAdmin, async (req, res) => {
     return res.status(502).json({ error: 'Could not send the test email. Check the email provider logs and try again.' });
   }
 });
+const adminResendAttempts = new Map();
+app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+    return res.status(400).json({ error: 'Enter a valid subscriber email.' });
+  }
+  if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
+  if (process.env.NODE_ENV === 'production' && !isPersistentStorageConfigured()) {
+    return res.status(503).json({ error: 'Persistent subscriber storage is required to resend alerts.' });
+  }
+
+  try {
+    const subscriber = (await listConfirmedSubscribers()).find((item) => item.email === email);
+    if (!subscriber) return res.status(404).json({ error: 'No confirmed subscriber was found for this email.' });
+
+    const lastSentAt = adminResendAttempts.get(email) || 0;
+    if (Date.now() - lastSentAt < 60_000) {
+      return res.status(429).json({ error: 'An alert was just sent to this subscriber. Wait one minute before resending.' });
+    }
+
+    let results;
+    try {
+      results = await fetchResults({ maxPage: 2 });
+    } catch (error) {
+      const cached = getCache();
+      if (!cached?.results?.length) throw error;
+      results = cached.results;
+    }
+    const latest = results
+      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    const officialUrl = latest && normalizeUrl(latest.url);
+    if (!latest || !officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) {
+      return res.status(503).json({ error: 'No current result announcement with a valid official source is available to send.' });
+    }
+
+    await sendResultAlert(subscriber, [latest], { resend: true });
+    adminResendAttempts.set(email, Date.now());
+    return res.json({ sent: true, title: latest.title });
+  } catch (error) {
+    console.error('Could not resend latest-result alert:', error.message);
+    return res.status(502).json({ error: 'Could not resend the alert. Check the email provider logs and try again.' });
+  }
+});
 app.post('/api/admin/subscribers/unsubscribe', requireAdmin, async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
@@ -253,21 +297,27 @@ function boardResultPageUrl(baseUrl, result) {
 async function notifySubscribers(results) {
   const subscribers = await listConfirmedSubscribers();
   if (!subscribers.length) return { recipients: 0, failed: 0 };
-  const baseUrl = publicBaseUrl();
-  const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(boardResultPageUrl(baseUrl, result))}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
-  const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${boardResultPageUrl(baseUrl, result)}`).join('\n');
-  const deliveries = await Promise.allSettled(subscribers.map(async (subscriber) => {
-    const unsubscribeUrl = `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(subscriber.unsubscribeToken)}`;
-    await sendEmail({
-      to: subscriber.email,
-      subject: `${results.length} new PRC exam ${results.length === 1 ? 'result' : 'results'} on BoardExamTracker`,
-      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">New board exam ${results.length === 1 ? 'result' : 'results'} are available</h1><p>BoardExamTracker found ${results.length} new announcement${results.length === 1 ? '' : 's'} in the public PRC Exam Results feed.</p><ul>${itemHtml}</ul><p><a href="${escapeEmailHtml(baseUrl)}">View BoardExamTracker</a></p><hr><p style="font-size:12px;color:#718097">Independent tracker; not affiliated with PRC. <a href="${escapeEmailHtml(unsubscribeUrl)}">Unsubscribe from these emails</a>.</p></div>`,
-      text: `New PRC exam ${results.length === 1 ? 'result' : 'results'} are available on BoardExamTracker.\n\n${itemText}\n\nUnsubscribe: ${unsubscribeUrl}`,
-    });
-  }));
+  const deliveries = await Promise.allSettled(subscribers.map((subscriber) => sendResultAlert(subscriber, results)));
   const failures = deliveries.filter((delivery) => delivery.status === 'rejected').length;
   if (failures) console.error(`Email delivery failed for ${failures} subscriber(s).`);
   return { recipients: subscribers.length, failed: failures };
+}
+
+async function sendResultAlert(subscriber, results, { resend = false } = {}) {
+  const baseUrl = publicBaseUrl();
+  const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(boardResultPageUrl(baseUrl, result))}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
+  const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${boardResultPageUrl(baseUrl, result)}`).join('\n');
+  const unsubscribeUrl = `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(subscriber.unsubscribeToken)}`;
+  const heading = resend ? 'Your requested board exam result reminder' : `New board exam ${results.length === 1 ? 'result' : 'results'} are available`;
+  const intro = resend
+    ? 'An administrator resent the latest result alert to you. You can review it on BoardExamTracker.'
+    : `BoardExamTracker found ${results.length} new announcement${results.length === 1 ? '' : 's'} in the public PRC Exam Results feed.`;
+  await sendEmail({
+    to: subscriber.email,
+    subject: resend ? `Reminder: latest board exam result on BoardExamTracker` : `${results.length} new PRC exam ${results.length === 1 ? 'result' : 'results'} on BoardExamTracker`,
+    html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">${escapeEmailHtml(heading)}</h1><p>${escapeEmailHtml(intro)}</p><ul>${itemHtml}</ul><p><a href="${escapeEmailHtml(baseUrl)}">View BoardExamTracker</a></p><hr><p style="font-size:12px;color:#718097">Independent tracker; not affiliated with PRC. <a href="${escapeEmailHtml(unsubscribeUrl)}">Unsubscribe from these emails</a>.</p></div>`,
+    text: `${heading}\n\n${intro}\n\n${itemText}\n\nUnsubscribe: ${unsubscribeUrl}`,
+  });
 }
 
 function emailActionPage(title, message, token, action, buttonText) {

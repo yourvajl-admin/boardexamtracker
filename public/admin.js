@@ -36,21 +36,56 @@ function renderSubscribers() {
     const emailCell = document.createElement('td');
     const statusCell = document.createElement('td');
     const actionCell = document.createElement('td');
+    const actions = document.createElement('div');
+    actions.className = 'subscriber-actions';
+    const resendButton = document.createElement('button');
     const button = document.createElement('button');
     emailCell.textContent = subscriber.email;
     statusCell.textContent = subscriber.status;
+    resendButton.className = 'resend-button';
+    resendButton.type = 'button';
+    resendButton.textContent = 'Resend alert';
+    resendButton.disabled = subscriber.status !== 'Confirmed';
+    resendButton.title = resendButton.disabled ? 'Only confirmed subscribers can receive alerts.' : `Send the latest result alert to ${subscriber.email}`;
+    resendButton.setAttribute('aria-label', `Resend latest result alert to ${subscriber.email}`);
+    resendButton.addEventListener('click', () => resendSubscriberAlert(subscriber.email, resendButton));
     button.className = 'unsubscribe-button';
     button.type = 'button';
     button.textContent = 'Unsubscribe';
     button.setAttribute('aria-label', `Unsubscribe ${subscriber.email}`);
     button.addEventListener('click', () => unsubscribeSubscriber(subscriber.email, button));
-    actionCell.append(button);
+    actions.append(resendButton, button);
+    actionCell.append(actions);
     row.append(emailCell, statusCell, actionCell);
     subscriberRows.append(row);
   }
   document.querySelector('#subscriber-count').textContent = `${visible.length} shown · ${subscribers.length} total`;
   subscriberEmpty.hidden = visible.length !== 0;
   subscriberEmpty.textContent = subscribers.length ? 'No subscriber emails match this search.' : 'No subscribers yet.';
+}
+
+async function resendSubscriberAlert(email, button) {
+  if (!window.confirm(`Resend the latest board exam result alert to ${email}?`)) return;
+  button.disabled = true;
+  button.textContent = 'Sending…';
+  try {
+    const data = await request('/api/admin/subscribers/resend-alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    button.textContent = 'Sent · wait 1 min';
+    setDashboardStatus(`Latest result alert sent to ${email}: ${data.title}`, 'good');
+    window.setTimeout(() => {
+      if (!button.isConnected) return;
+      button.disabled = false;
+      button.textContent = 'Resend alert';
+    }, 60_000);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'Resend alert';
+    setDashboardStatus(error.message, 'bad');
+  }
 }
 
 async function unsubscribeSubscriber(email, button) {
