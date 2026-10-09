@@ -89,7 +89,7 @@ function render() {
   document.querySelector('#load-more-label').textContent = state.archiveLoaded
     ? 'Load more results'
     : state.query && filtered.length === 0 ? 'Search all results' : 'Browse older results';
-  grid.innerHTML = visible.map((item, index) => `<article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}" role="button" tabindex="0" aria-label="Open details for ${escapeHtml(item.title)}" data-open-result="${escapeHtml(item.url)}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div></article>`).join('');
+  grid.innerHTML = visible.map((item, index) => `<article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}" tabindex="0" aria-label="Open details for ${escapeHtml(item.title)}" data-open-result="${escapeHtml(item.url)}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div><a class="result-card-detail-link" href="/results/${encodeURIComponent(resultSlug(item))}">View result details <span aria-hidden="true">→</span></a></article>`).join('');
   updateAdSlot();
 }
 function updateAdSlot() {
@@ -267,6 +267,7 @@ document.querySelector('#filters').addEventListener('click', (event) => { const 
 document.querySelector('#profession-filter').addEventListener('change', (event) => { state.profession = event.target.value; state.limit = PAGE_SIZE; render(); });
 document.querySelector('#refresh-button').addEventListener('click', () => loadResults(true));
 grid.addEventListener('click', async (event) => {
+  if (event.target.closest('.result-card-detail-link')) return;
   const card = event.target.closest('.result-card-open[data-open-result]');
   if (!card) return;
   const item = state.results.find((result) => result.url === card.dataset.openResult);
@@ -303,6 +304,7 @@ grid.addEventListener('click', async (event) => {
 });
 grid.addEventListener('keydown', (event) => {
   if (!['Enter', ' '].includes(event.key)) return;
+  if (event.target.closest('a')) return;
   const card = event.target.closest('.result-card-open[data-open-result]');
   if (!card) return;
   event.preventDefault();
@@ -334,8 +336,31 @@ async function renderDetail() {
     detail.innerHTML = '<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><h1>Result not found</h1><p>This announcement may no longer be listed in the latest PRC results feed.</p>';
     return;
   }
+  const detailUrl = `https://boardexamtracker.com/results/${encodeURIComponent(slug)}`;
+  const description = (item.description || `View the ${item.category || 'professional licensure'} result brief and documents linked to this PRC announcement.`).slice(0, 300);
   document.title = `${item.title} | BoardExamTracker`;
-  detail.innerHTML = `<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><div class="detail-shell"><div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p class="detail-summary">This page brings the result files associated with this notice together in one place. Use the document previews below to review the information, then confirm names and other important details in the source files.</p><div class="detail-source-note"><span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg></span><p>Titles, release dates, and document links are indexed from public PRC notices. BoardExamTracker's summaries and navigation are independently written. The files are provided by their original source.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading links published with the announcement…</p></div></section></div>`;
+  document.querySelector('meta[name="description"]')?.setAttribute('content', description);
+  document.querySelector('link[rel="canonical"]')?.setAttribute('href', detailUrl);
+  document.querySelector('meta[property="og:type"]')?.setAttribute('content', 'article');
+  document.querySelector('meta[property="og:title"]')?.setAttribute('content', `${item.title} | BoardExamTracker`);
+  document.querySelector('meta[property="og:description"]')?.setAttribute('content', description);
+  document.querySelector('meta[property="og:url"]')?.setAttribute('content', detailUrl);
+  document.querySelector('meta[name="twitter:title"]')?.setAttribute('content', `${item.title} | BoardExamTracker`);
+  document.querySelector('meta[name="twitter:description"]')?.setAttribute('content', description);
+  const structuredData = document.querySelector('script[type="application/ld+json"]');
+  if (structuredData) structuredData.textContent = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: item.title,
+    description,
+    datePublished: item.date,
+    dateModified: item.date,
+    author: { '@type': 'Organization', name: 'BoardExamTracker' },
+    publisher: { '@type': 'Organization', name: 'BoardExamTracker' },
+    mainEntityOfPage: detailUrl,
+    citation: item.url,
+  });
+  detail.innerHTML = `<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><div class="detail-shell"><div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p class="detail-summary">${escapeHtml(item.description || 'This page brings the result files associated with this notice together in one place. Use the document previews below to review the information, then confirm names and other important details in the source files.')}</p><div class="detail-source-note"><span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"/></svg></span><p>Titles, release dates, and document links are indexed from public PRC notices. BoardExamTracker's summaries and navigation are independently written. The files are provided by their original source. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading links published with the announcement…</p></div></section></div>`;
   const resources = document.querySelector('#detail-resources');
   try {
     const response = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`);

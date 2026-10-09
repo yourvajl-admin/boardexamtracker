@@ -19,6 +19,12 @@ BoardExamTracker is an independent, responsive tracker for Philippine profession
 - One optional, manually placed responsive AdSense unit on the homepage, below the results and load-more control; no auto ads, sticky ads, pop-ups, ads in result cards, or ads in detail panels.
 - Privacy policy at `/privacy.html`; `/ads.txt` is generated from the AdSense publisher ID when configured.
 - Semantic page structure, keyboard focus states, metadata, Open Graph/Twitter tags, JSON-LD, robots.txt and sitemap.xml.
+
+### Search indexing
+
+The public `robots.txt` allows crawling of public pages and points to `/sitemap.xml`. The sitemap lists the homepage, privacy page, and currently cached result detail URLs. Result cards include crawlable links to their own BoardExamTracker detail pages, and those pages set a result-specific canonical URL and metadata when rendered.
+
+To request Google indexing, verify `boardexamtracker.com` as a Domain property in Google Search Console, submit `https://boardexamtracker.com/sitemap.xml`, and use URL Inspection to request indexing for the homepage and representative result pages. In Search Console, make sure the site is included in Search generative AI features. Crawling, indexing, AI Overview inclusion, and timing are decided by Google and cannot be guaranteed.
 - Original BoardExamTracker logo lockup with a square document-check mark, closely aligned name, SVG originals, and transparent 1400 × 280 PNG exports for light and dark backgrounds.
 
 ## Requirements

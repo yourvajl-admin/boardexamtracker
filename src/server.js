@@ -1,6 +1,7 @@
 require('./env').loadLocalEnv();
 
 const express = require('express');
+const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
@@ -33,6 +34,21 @@ const announcementCache = new Map();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
+app.get('/sitemap.xml', async (_req, res) => {
+  try {
+    const cached = isFresh() ? getCache() : null;
+    const latest = cached?.results?.length ? cached : { results: await fetchResults({ maxPage: 0 }) };
+    const urls = [
+      '<url><loc>https://boardexamtracker.com/</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>',
+      '<url><loc>https://boardexamtracker.com/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>',
+      ...latest.results.map((item) => `<url><loc>https://boardexamtracker.com/results/${encodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop())}</loc><lastmod>${item.date}</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>`),
+    ];
+    res.type('application/xml').set('Cache-Control', 'public, max-age=300').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join('')}</urlset>`);
+  } catch (error) {
+    console.warn('Could not refresh sitemap results:', error.message);
+    res.status(503).type('text/plain').send('Sitemap temporarily unavailable.');
+  }
+});
 app.use((req, res, next) => {
   const origin = req.get('origin');
   if (!origin || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
@@ -512,8 +528,17 @@ app.get('/api/announcement-links', async (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
-app.get('/results/:slug', (_req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+app.get('/results/:slug', async (req, res) => {
+  try {
+    const html = await fs.readFile(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const canonical = `https://boardexamtracker.com/results/${encodeURIComponent(req.params.slug)}`;
+    const page = html
+      .replace('rel="canonical" href="https://boardexamtracker.com/"', `rel="canonical" href="${canonical}"`)
+      .replace('property="og:url" content="https://boardexamtracker.com/"', `property="og:url" content="${canonical}"`);
+    res.type('html').send(page);
+  } catch {
+    res.status(500).type('text/plain').send('Could not load the result page.');
+  }
 });
 if (require.main === module) {
   app.listen(port, () => {
