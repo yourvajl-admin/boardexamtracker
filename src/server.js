@@ -23,9 +23,12 @@ const {
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const INITIAL_RESULTS_LIMIT = 12;
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 let pendingFetch = null;
+let pendingArchiveFetch = null;
+let archiveCacheLoaded = false;
 const announcementCache = new Map();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -263,19 +266,33 @@ app.get('/ads.txt', (_req, res) => {
   return res.type('text/plain').send(`google.com, ${publisherId}, DIRECT, f08c47fec0942fa0\n`);
 });
 
+function mergeResultLists(...lists) {
+  const merged = new Map();
+  for (const result of lists.flat()) merged.set(result.url, result);
+  return [...merged.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
 async function refresh() {
   if (!pendingFetch) {
-    const cached = getCache();
-    const options = cached ? { maxPage: 2 } : {};
-    pendingFetch = fetchResults(options)
-      .then((latest) => {
-        if (!cached) return setCache(latest);
-        const merged = new Map([...latest, ...cached.results].map((result) => [result.url, result]));
-        return setCache([...merged.values()].sort((a, b) => b.date.localeCompare(a.date)));
-      })
+    pendingFetch = fetchResults({ maxPage: 2 })
+      .then((latest) => setCache(mergeResultLists(getCache()?.results || [], latest)))
       .finally(() => { pendingFetch = null; });
   }
   return pendingFetch;
+}
+
+async function loadArchiveResults() {
+  const cached = getCache();
+  if (archiveCacheLoaded && cached && !cached.stale) return cached;
+  if (!pendingArchiveFetch) {
+    pendingArchiveFetch = fetchResults()
+      .then((archive) => {
+        archiveCacheLoaded = true;
+        return setCache(mergeResultLists(getCache()?.results || [], archive));
+      })
+      .finally(() => { pendingArchiveFetch = null; });
+  }
+  return pendingArchiveFetch;
 }
 
 function escapeEmailHtml(value = '') {
@@ -368,7 +385,7 @@ app.get('/api/cron/check-results', async (req, res) => {
     const saved = await redisCommand('GET', KNOWN_RESULTS_KEY);
     if (typeof saved !== 'string') {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
-      setCache(latest);
+      setCache(mergeResultLists(getCache()?.results || [], latest));
       return res.json({ initialized: true, newResults: 0, message: 'Saved current results as the notification baseline.' });
     }
 
@@ -379,7 +396,7 @@ app.get('/api/cron/check-results', async (req, res) => {
       knownUrls = new Set(decoded);
     } catch {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
-      setCache(latest);
+      setCache(mergeResultLists(getCache()?.results || [], latest));
       return res.json({ initialized: true, newResults: 0, message: 'Rebuilt the notification baseline.' });
     }
     const newResults = latest.filter((result) => !knownUrls.has(result.url));
@@ -387,7 +404,7 @@ app.get('/api/cron/check-results', async (req, res) => {
     if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
     const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
-    setCache(latest);
+    setCache(mergeResultLists(getCache()?.results || [], latest));
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
@@ -450,18 +467,28 @@ app.post('/api/email/unsubscribe', express.urlencoded({ extended: false, limit: 
 });
 
 app.get('/api/results', async (req, res) => {
+  if (req.query.archive === 'true') {
+    try {
+      const value = await loadArchiveResults();
+      return res.json({ results: value.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: archiveCacheLoaded, archiveLoaded: true, stale: false, source: SOURCE_URL });
+    } catch (error) {
+      const cached = getCache();
+      if (cached) return res.status(200).json({ results: cached.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale: true, source: SOURCE_URL, warning: 'Showing the latest cached results. Older results could not be loaded.' });
+      return res.status(503).json({ results: [], professions: PROFESSION_CATEGORIES, lastUpdated: null, cached: false, archiveLoaded: false, stale: false, source: SOURCE_URL, error: 'Unable to retrieve older PRC results.', message: error.message });
+    }
+  }
   const force = req.query.refresh === 'true';
   if (!force && isFresh()) {
     const cached = getCache();
-    return res.json({ results: cached.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, stale: false, source: SOURCE_URL });
+    return res.json({ results: cached.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale: false, source: SOURCE_URL });
   }
   try {
     const value = await refresh();
-    return res.json({ results: value.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: false, stale: false, source: SOURCE_URL });
+    return res.json({ results: value.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: false, archiveLoaded: false, stale: false, source: SOURCE_URL });
   } catch (error) {
     const cached = getCache();
-    if (cached) return res.status(200).json({ results: cached.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, stale: true, source: SOURCE_URL, warning: 'Showing the latest cached results.' });
-    return res.status(503).json({ results: [], professions: PROFESSION_CATEGORIES, lastUpdated: null, cached: false, stale: false, source: SOURCE_URL, error: 'Unable to retrieve the latest PRC results.', message: error.message });
+    if (cached) return res.status(200).json({ results: cached.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale: true, source: SOURCE_URL, warning: 'Showing the latest cached results.' });
+    return res.status(503).json({ results: [], professions: PROFESSION_CATEGORIES, lastUpdated: null, cached: false, archiveLoaded: false, stale: false, source: SOURCE_URL, error: 'Unable to retrieve the latest PRC results.', message: error.message });
   }
 });
 

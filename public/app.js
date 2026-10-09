@@ -7,9 +7,10 @@ const SEARCH_ALIASES = {
   let: ['teacher', 'professional teachers'],
   cpa: ['certified public accountant', 'accountancy'],
 };
-const state = { results: [], professions: [], query: '', filter: 'all', profession: 'all', limit: PAGE_SIZE };
+const state = { results: [], professions: [], query: '', filter: 'all', profession: 'all', limit: PAGE_SIZE, archiveLoaded: false };
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 let resultsRequestActive = false;
+let archiveRequest = null;
 let lastResultsCheck = Date.now();
 const grid = document.querySelector('#results-grid');
 const status = document.querySelector('#result-status');
@@ -25,6 +26,8 @@ const adSlot = document.querySelector('#results-ad-slot');
 const adsenseUnit = document.querySelector('#adsense-results');
 const emailAlertForm = document.querySelector('#email-alert-form');
 const emailAlertStatus = document.querySelector('#email-alert-status');
+const emailAlertStatusMessage = document.querySelector('#email-alert-status-message');
+const emailAlertAvailability = document.querySelector('#email-alert-availability');
 const emailAlertButton = emailAlertForm.querySelector('button[type="submit"]');
 let emailAlertsEnabled = false;
 let adsenseConfig = null;
@@ -82,7 +85,10 @@ function render() {
   count.textContent = `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`;
   empty.hidden = filtered.length !== 0;
   grid.hidden = filtered.length === 0;
-  loadMore.hidden = visible.length >= filtered.length || filtered.length === 0;
+  loadMore.hidden = (visible.length >= filtered.length && state.archiveLoaded) || state.results.length === 0;
+  document.querySelector('#load-more-label').textContent = state.archiveLoaded
+    ? 'Load more results'
+    : state.query && filtered.length === 0 ? 'Search all results' : 'Browse older results';
   grid.innerHTML = visible.map((item, index) => `<article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}" role="button" tabindex="0" aria-label="Open details for ${escapeHtml(item.title)}" data-open-result="${escapeHtml(item.url)}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div></article>`).join('');
   updateAdSlot();
 }
@@ -149,10 +155,29 @@ function renderProfessionCards() {
   professionTrack.innerHTML = categories.map((category, index) => {
     const count = resultCounts.get(category) || 0;
     const initials = category.split(/\s+/).filter((word) => !['and', 'of', 'the'].includes(word.toLowerCase())).slice(0, 2).map((word) => word[0]).join('').toUpperCase();
-    const countLabel = count ? `<small class="profession-result-count">${count} ${count === 1 ? 'result' : 'results'} available</small>` : '';
-    return `<a class="profession-card" href="#latest" data-profession-search="${escapeHtml(category)}" role="listitem" aria-label="Browse ${escapeHtml(category)} results${count ? `, ${count} available` : ''}"><span class="prof-symbol ${colorClasses[index % colorClasses.length]}">${escapeHtml(initials)}</span><b>${escapeHtml(category)}</b><small>Licensure exam results</small>${countLabel}<span class="profession-card-cta">View results <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></span></span><span class="card-arrow" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></span></a>`;
+    const countLabel = state.archiveLoaded && count ? `<small class="profession-result-count">${count} ${count === 1 ? 'result' : 'results'} available</small>` : '';
+    return `<a class="profession-card" href="#latest" data-profession-search="${escapeHtml(category)}" role="listitem" aria-label="Browse ${escapeHtml(category)} results${state.archiveLoaded && count ? `, ${count} available` : ''}"><span class="prof-symbol ${colorClasses[index % colorClasses.length]}">${escapeHtml(initials)}</span><b>${escapeHtml(category)}</b><small>Licensure exam results</small>${countLabel}<span class="profession-card-cta">View results <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></span></span><span class="card-arrow" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></span></a>`;
   }).join('');
   requestAnimationFrame(updateProfessionSlider);
+}
+function renderProfessionFilter(professions) {
+  const countsByProfession = state.results.reduce((counts, item) => {
+    const category = item.category || 'PRC Examination Result';
+    counts.set(category, (counts.get(category) || 0) + 1);
+    return counts;
+  }, new Map());
+  const names = Array.isArray(professions) ? [...professions] : [...countsByProfession.keys()].filter((name) => name !== 'PRC Examination Result').sort();
+  if (countsByProfession.has('PRC Examination Result')) names.push('PRC Examination Result');
+  const select = document.querySelector('#profession-filter');
+  const previous = select.value;
+  select.innerHTML = '<option value="all">All professions</option>' + names.map((name) => {
+    const resultCount = countsByProfession.get(name) || 0;
+    const label = state.archiveLoaded
+      ? resultCount ? `${name} (${resultCount})` : `${name} — no results`
+      : resultCount ? name : `${name} — check older results`;
+    return `<option value="${escapeHtml(name)}"${state.archiveLoaded && !resultCount ? ' disabled' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+  if (names.includes(previous)) select.value = previous;
 }
 function setNotice(message, kind = '') { status.textContent = message; status.className = `status-message ${kind}`; status.hidden = !message; }
 function updateRefreshCountdown() {
@@ -185,22 +210,14 @@ async function loadResults(refresh = false) {
     state.professions = Array.isArray(data.professions) ? data.professions : state.professions;
     renderProfessionCards();
     if (!response.ok) throw new Error(data.error || 'Unable to retrieve the latest PRC results.');
-    state.results = Array.isArray(data.results) ? data.results : [];
-    const countsByProfession = state.results.reduce((counts, item) => {
-      const category = item.category || 'PRC Examination Result';
-      counts.set(category, (counts.get(category) || 0) + 1);
-      return counts;
-    }, new Map());
-    const professions = Array.isArray(data.professions) ? [...data.professions] : [...countsByProfession.keys()].filter((name) => name !== 'PRC Examination Result').sort();
-    if (countsByProfession.has('PRC Examination Result')) professions.push('PRC Examination Result');
-    const select = document.querySelector('#profession-filter');
-    const previous = select.value;
-    select.innerHTML = '<option value="all">All professions</option>' + professions.map((name) => {
-      const resultCount = countsByProfession.get(name) || 0;
-      const label = resultCount ? `${name} (${resultCount})` : `${name} — no results`;
-      return `<option value="${escapeHtml(name)}"${resultCount ? '' : ' disabled'}>${escapeHtml(label)}</option>`;
-    }).join('');
-    if (countsByProfession.has(previous)) select.value = previous;
+    const incoming = Array.isArray(data.results) ? data.results : [];
+    if (state.archiveLoaded || data.archiveLoaded) {
+      state.results = [...new Map([...state.results, ...incoming].map((item) => [item.url, item])).values()].sort((a, b) => b.date.localeCompare(a.date));
+      state.archiveLoaded = true;
+    } else {
+      state.results = incoming;
+    }
+    renderProfessionFilter(data.professions);
     updated.textContent = `Last updated: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
     setNotice(data.stale ? 'Showing the latest cached results.' : data.warning || '');
     renderProfessionCards();
@@ -217,6 +234,31 @@ async function loadResults(refresh = false) {
     resultsRequestActive = false;
     updateRefreshCountdown();
   }
+}
+
+async function loadArchiveResults() {
+  if (state.archiveLoaded) return state.results;
+  if (archiveRequest) return archiveRequest;
+  archiveRequest = (async () => {
+    grid.setAttribute('aria-busy', 'true');
+    try {
+      const response = await fetch('/api/results?archive=true', { headers: { Accept: 'application/json' } });
+      const data = await response.json();
+      if (!response.ok || !data.archiveLoaded) throw new Error(data.error || data.warning || 'Older results could not be loaded. Please try again.');
+      state.results = [...new Map([...state.results, ...(Array.isArray(data.results) ? data.results : [])].map((item) => [item.url, item])).values()].sort((a, b) => b.date.localeCompare(a.date));
+      state.archiveLoaded = true;
+      if (Array.isArray(data.professions)) state.professions = data.professions;
+      renderProfessionFilter(state.professions);
+      updated.textContent = `Last updated: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
+      renderProfessionCards();
+      if (!location.pathname.startsWith('/results/')) render();
+      return state.results;
+    } finally {
+      grid.setAttribute('aria-busy', 'false');
+      archiveRequest = null;
+    }
+  })();
+  return archiveRequest;
 }
 
 document.querySelector('#search-input').addEventListener('input', (event) => { state.query = event.target.value.trim(); state.limit = PAGE_SIZE; render(); });
@@ -274,10 +316,20 @@ document.querySelector('#disclaimer-close').addEventListener('click', () => disc
 disclaimerDialog.addEventListener('click', (event) => { if (event.target === disclaimerDialog) disclaimerDialog.close(); });
 async function renderDetail() {
   const slug = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
-  const item = state.results.find((result) => resultSlug(result) === slug);
+  let item = state.results.find((result) => resultSlug(result) === slug);
   const detail = document.querySelector('#detail-view');
   document.querySelectorAll('#main > *').forEach((section) => { section.hidden = section !== detail; });
   detail.hidden = false;
+  if (!item && !state.archiveLoaded) {
+    detail.innerHTML = '<a class="detail-back" href="/">Back to latest results</a><h1>Finding this result…</h1><p>Checking older PRC announcements.</p>';
+    try {
+      await loadArchiveResults();
+      item = state.results.find((result) => resultSlug(result) === slug);
+    } catch {
+      detail.innerHTML = '<a class="detail-back" href="/">Back to latest results</a><h1>Result temporarily unavailable</h1><p>Older announcements could not be loaded right now. Please try again later.</p>';
+      return;
+    }
+  }
   if (!item) {
     detail.innerHTML = '<a class="detail-back" href="/"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-6-6 6 6 6"/></svg> Back to latest results</a><h1>Result not found</h1><p>This announcement may no longer be listed in the latest PRC results feed.</p>';
     return;
@@ -296,7 +348,24 @@ async function renderDetail() {
     resources.innerHTML = '<p class="dialog-empty">Result document links could not be loaded. Return to the results list and try again later.</p>';
   }
 }
-loadMore.addEventListener('click', () => { state.limit += PAGE_SIZE; render(); });
+loadMore.addEventListener('click', async () => {
+  if (!state.archiveLoaded) {
+    loadMore.disabled = true;
+    document.querySelector('#load-more-label').textContent = 'Loading older results…';
+    try {
+      await loadArchiveResults();
+      state.limit += PAGE_SIZE;
+      setNotice('Older results are now available.');
+    } catch (error) {
+      setNotice(error.message, 'error');
+    } finally {
+      loadMore.disabled = false;
+    }
+  } else {
+    state.limit += PAGE_SIZE;
+  }
+  render();
+});
 document.querySelector('#clear-search').addEventListener('click', () => { state.query = ''; state.filter = 'all'; state.profession = 'all'; state.limit = PAGE_SIZE; document.querySelector('#search-input').value = ''; document.querySelector('#profession-filter').value = 'all'; document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item.dataset.filter === 'all')); render(); });
 document.querySelectorAll('[data-search]').forEach((link) => link.addEventListener('click', () => { const term = link.dataset.search; document.querySelector('#search-input').value = term; state.query = term; state.limit = PAGE_SIZE; render(); }));
 professionTrack.addEventListener('click', (event) => {
@@ -339,7 +408,7 @@ fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
   .then((data) => {
     emailAlertsEnabled = Boolean(data.available);
     emailAlertButton.disabled = !emailAlertsEnabled;
-    emailAlertStatus.textContent = data.available
+    emailAlertAvailability.textContent = data.available
       ? 'You’ll receive a confirmation email before alerts begin. Unsubscribe from any alert email.'
       : data.reason === 'storage'
         ? 'Email alerts are temporarily unavailable while secure subscriber storage is being configured.'
@@ -348,7 +417,7 @@ fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
   .catch(() => {
     emailAlertsEnabled = false;
     emailAlertButton.disabled = true;
-    emailAlertStatus.textContent = 'Email alert availability could not be checked. Please try again later.';
+    emailAlertAvailability.textContent = 'Email alert availability could not be checked. Please try again later.';
   });
 fetch('/api/adsense-config', { headers: { Accept: 'application/json' } })
   .then((response) => response.json())
@@ -362,23 +431,30 @@ emailAlertForm.addEventListener('submit', async (event) => {
   const buttonText = emailAlertButton.innerHTML;
   emailAlertButton.disabled = true;
   emailAlertButton.textContent = 'Sending confirmation…';
-  emailAlertStatus.textContent = '';
+  emailAlertStatus.hidden = true;
+  emailAlertStatusMessage.textContent = '';
+  emailAlertAvailability.textContent = '';
+  const email = document.querySelector('#alert-email').value.trim();
   try {
     const response = await fetch('/api/notifications/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ email: document.querySelector('#alert-email').value }),
+      body: JSON.stringify({ email }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not request email alerts.');
-    emailAlertStatus.textContent = data.message;
+    emailAlertStatusMessage.textContent = `We sent a confirmation email to ${email}. Open it and click “Confirm subscription” to start receiving alerts.`;
+    emailAlertStatus.hidden = false;
     emailAlertForm.reset();
   } catch (error) {
-    emailAlertStatus.textContent = error.message;
+    emailAlertAvailability.textContent = error.message;
   } finally {
     emailAlertButton.innerHTML = buttonText;
     emailAlertButton.disabled = !emailAlertsEnabled;
   }
+});
+document.querySelector('#email-alert-status-close').addEventListener('click', () => {
+  emailAlertStatus.hidden = true;
 });
 loadResults();
 setInterval(updateRefreshCountdown, 1000);

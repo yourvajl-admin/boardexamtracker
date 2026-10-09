@@ -4,13 +4,14 @@ BoardExamTracker is an independent, responsive tracker for Philippine profession
 
 ## Features
 
-- Fetches public result announcements across the paginated PRC results archive and presents files linked in each PRC announcement.
+- Fetches the latest PRC announcements for the initial page; the full paginated archive is retrieved on demand when a visitor browses older results or opens an older result page.
 - Extracts titles and release dates, then creates short rephrased summaries; classifies titles against the complete list of 46 PRC professional regulatory board categories.
 - Writes concise summaries from selected facts such as pass counts, exam timing, testing centers, and release turnaround; it does not reproduce announcement paragraphs as site copy.
 - Removes duplicate announcement URLs and sorts newest first.
 - Caches the PRC response for five minutes, supports an explicit refresh, and serves stale cached results when PRC is unavailable.
 - Refreshes the PRC archive in the background every five minutes; open pages show a live countdown and check for updated results automatically.
 - Responsive results cards, instant search (including CELE, MPLE, and MELE acronym matching), date and profession filters, and progressive loading.
+- Displays the latest 12 results first to avoid waiting for a full archive crawl before the homepage appears.
 - Persistent light/dark appearance toggle in the header, with color-aware logos and browser theme color.
 - Horizontal, touch-friendly carousel for all 46 PRC profession categories, with counts derived from the fetched results.
 - Opt-in email alerts with email confirmation and an unsubscribe link; alerts are sent when the five-minute PRC check discovers new announcements. Subscriber records use Upstash Redis in production and a private local JSON file for development.
