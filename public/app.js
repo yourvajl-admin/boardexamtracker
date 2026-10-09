@@ -403,6 +403,15 @@ if (location.pathname.startsWith('/results/')) {
   });
 }
 document.querySelector('#year').textContent = new Date().getFullYear();
+document.querySelector('.floating-email-cta').addEventListener('click', (event) => {
+  if (!['/', '/index.html'].includes(location.pathname)) return;
+  const section = document.querySelector('#email-alert-section');
+  if (!section) return;
+  event.preventDefault();
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  section.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+  history.replaceState(null, '', '/#email-alert-section');
+});
 fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
   .then((response) => response.json())
   .then((data) => {

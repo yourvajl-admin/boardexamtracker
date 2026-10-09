@@ -48,6 +48,8 @@
 :root[data-theme="dark"] .email-alert-form label,:root[data-theme="dark"] .email-alert-form small{color:#a8b8ca}
 :root[data-theme="dark"] .email-alert-popup{border-color:#2c6652;background:#17382f;color:#c8f2df;box-shadow:0 12px 28px rgba(0,0,0,.35)}
 :root[data-theme="dark"] .email-alert-controls .email-alert-popup-close{border-color:#396e5b;background:transparent;color:#c8f2df}
+:root[data-theme="dark"] .floating-email-cta{border-color:#4a8bc4;background:#2867a8;box-shadow:0 8px 26px rgba(0,0,0,.42);color:#fff}
+:root[data-theme="dark"] .floating-email-cta:hover{background:#3479b9}
 :root[data-theme="dark"] .site-footer{background:#0b1422}
 :root[data-theme="dark"] .skip-link{background:#172438;color:#e5edf7}
 .theme-toggle{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:8px;border:1px solid var(--line);border-radius:11px;background:#fff;color:#44617f;cursor:pointer;transition:background .18s,border-color .18s,color .18s}
