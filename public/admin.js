@@ -1,7 +1,12 @@
 const views = ['loading-view', 'setup-view', 'login-view', 'dashboard-view'];
 const loginForm = document.querySelector('#login-form');
 const loginStatus = document.querySelector('#login-status');
-const overviewStatus = document.querySelector('#overview-status');
+const dashboardStatus = document.querySelector('#dashboard-status');
+const subscriberRows = document.querySelector('#subscriber-rows');
+const subscriberEmpty = document.querySelector('#subscriber-empty');
+const searchInput = document.querySelector('#subscriber-search');
+let subscribers = [];
+let viewerRefreshTimer = null;
 
 function showView(id) {
   views.forEach((viewId) => { document.getElementById(viewId).hidden = viewId !== id; });
@@ -14,25 +19,94 @@ async function request(url, options = {}) {
   return data;
 }
 
-function setNotice(message, type = '') {
-  overviewStatus.textContent = message;
-  overviewStatus.className = `notice ${type}`.trim();
+function setDashboardStatus(message, type = '') {
+  dashboardStatus.textContent = message;
+  dashboardStatus.className = `notice ${type}`.trim();
+  dashboardStatus.hidden = !message;
 }
 
-async function loadOverview() {
-  showView('dashboard-view');
-  setNotice('Loading configuration…');
+function renderSubscribers() {
+  const query = searchInput.value.trim().toLowerCase();
+  const visible = subscribers.filter((subscriber) => subscriber.email.toLowerCase().includes(query));
+  subscriberRows.replaceChildren();
+  for (const subscriber of visible) {
+    const row = document.createElement('tr');
+    const emailCell = document.createElement('td');
+    const statusCell = document.createElement('td');
+    const actionCell = document.createElement('td');
+    const button = document.createElement('button');
+    emailCell.textContent = subscriber.email;
+    statusCell.textContent = subscriber.status;
+    button.className = 'unsubscribe-button';
+    button.type = 'button';
+    button.textContent = 'Unsubscribe';
+    button.setAttribute('aria-label', `Unsubscribe ${subscriber.email}`);
+    button.addEventListener('click', () => unsubscribeSubscriber(subscriber.email, button));
+    actionCell.append(button);
+    row.append(emailCell, statusCell, actionCell);
+    subscriberRows.append(row);
+  }
+  document.querySelector('#subscriber-count').textContent = `${visible.length} shown · ${subscribers.length} total`;
+  subscriberEmpty.hidden = visible.length !== 0;
+  subscriberEmpty.textContent = subscribers.length ? 'No subscriber emails match this search.' : 'No subscribers yet.';
+}
+
+async function unsubscribeSubscriber(email, button) {
+  if (!window.confirm(`Remove ${email} from BoardExamTracker email alerts?`)) return;
+  button.disabled = true;
   try {
-    const data = await request('/api/admin/overview');
-    document.querySelector('#email-state').textContent = data.emailConfigured ? 'Configured' : 'Not configured';
-    document.querySelector('#email-sender').textContent = data.sender || 'Not set';
-    document.querySelector('#subscriber-confirmed').textContent = String(data.subscribers.confirmed);
-    document.querySelector('#subscriber-pending').textContent = String(data.subscribers.pending);
-    document.querySelector('#storage-note').textContent = 'This server currently stores subscriber records in a local data file. That file is private and ignored by Git, but it is not durable on serverless hosting such as Vercel.';
-    setNotice(data.emailConfigured ? 'Email delivery is configured. New subscribers must confirm their address before alerts begin.' : 'Email delivery is not configured yet. Add the Resend environment variables in the hosting dashboard and redeploy.', data.emailConfigured ? 'good' : 'bad');
+    await request('/api/admin/subscribers/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    subscribers = subscribers.filter((subscriber) => subscriber.email !== email);
+    renderSubscribers();
+    setDashboardStatus(`${email} has been unsubscribed.`, 'good');
+  } catch (error) {
+    button.disabled = false;
+    setDashboardStatus(error.message, 'bad');
+  }
+}
+
+async function refreshViewerCount() {
+  const count = document.querySelector('#viewer-count');
+  const label = document.querySelector('#viewer-status');
+  try {
+    const data = await request('/api/admin/viewers');
+    if (data.shared) {
+      count.textContent = String(data.count);
+      label.textContent = 'Active site sessions within the last 90 seconds';
+    } else if (data.production) {
+      count.textContent = '—';
+      label.textContent = 'Add shared Upstash Redis storage in Vercel for a live count';
+    } else {
+      count.textContent = String(data.count);
+      label.textContent = 'Local server count only; shared Redis enables reliable deployed counts';
+    }
+  } catch (error) {
+    count.textContent = '—';
+    label.textContent = error.message;
+  }
+}
+
+async function loadDashboard() {
+  showView('dashboard-view');
+  setDashboardStatus('Loading subscriber addresses…');
+  try {
+    const data = await request('/api/admin/subscribers');
+    subscribers = data.subscribers;
+    renderSubscribers();
+    if (!data.persistentStorage && data.production) {
+      setDashboardStatus('Persistent subscriber storage is not connected. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel to reliably store and manage subscribers.', 'bad');
+    } else {
+      setDashboardStatus('Only admins can see this list. A manual unsubscribe removes the address from future alerts.', 'good');
+    }
+    await refreshViewerCount();
+    if (!viewerRefreshTimer) viewerRefreshTimer = setInterval(refreshViewerCount, 15_000);
   } catch (error) {
     if (error.message.includes('Admin sign-in required')) showView('login-view');
-    else setNotice(error.message, 'bad');
+    else setDashboardStatus(error.message, 'bad');
   }
 }
 
@@ -40,7 +114,7 @@ async function initialize() {
   try {
     const data = await request('/api/admin/session');
     if (!data.configured) showView('setup-view');
-    else if (data.authenticated) await loadOverview();
+    else if (data.authenticated) await loadDashboard();
     else showView('login-view');
   } catch (error) {
     showView('login-view');
@@ -64,7 +138,7 @@ loginForm.addEventListener('submit', async (event) => {
     });
     loginForm.reset();
     loginStatus.textContent = '';
-    await loadOverview();
+    await loadDashboard();
   } catch (error) {
     loginStatus.textContent = error.message;
   } finally {
@@ -72,8 +146,12 @@ loginForm.addEventListener('submit', async (event) => {
   }
 });
 
+searchInput.addEventListener('input', renderSubscribers);
+
 document.querySelector('#logout-button').addEventListener('click', async () => {
   try { await request('/api/admin/logout', { method: 'POST' }); } catch { /* Signing out still returns to the login screen. */ }
+  if (viewerRefreshTimer) clearInterval(viewerRefreshTimer);
+  viewerRefreshTimer = null;
   showView('login-view');
 });
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Privacy Policy | BoardExamTracker</title>
-  <meta name="description" content="Learn how BoardExamTracker handles email subscriptions, cookies, and advertising technologies.">
+  <meta name="description" content="Learn how BoardExamTracker handles email subscriptions, anonymous live viewer counts, and advertising technologies.">
   <meta name="theme-color" content="#f5f8fc">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://boardexamtracker.ph/privacy.html">
@@ -13,6 +13,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/theme.js?v=20261009-16"></script>
+  <script src="/viewers.js?v=20261009-1" defer></script>
   <link rel="stylesheet" href="/styles.css?v=20261009-19">
   <link rel="stylesheet" href="/theme.css?v=20261009-17">
 </head>
@@ -32,8 +33,11 @@
     <p>BoardExamTracker is an independent Philippine licensure examination results tracker. This policy explains the information used to run the site and, if enabled, display advertisements.</p>
 
     <h2>Email result alerts</h2>
-    <p>If you subscribe to result alerts, we store your email address and the confirmation and unsubscribe tokens needed to manage that subscription. We use the address to send the confirmation message and new-result alerts you requested. You can unsubscribe through the link in an alert email; your subscription record is then removed.</p>
+    <p>If you subscribe to result alerts, we store your email address and the confirmation and unsubscribe tokens needed to manage that subscription. We use the address to send the confirmation message and new-result alerts you requested. You can unsubscribe through the link in an alert email, or contact the site administrator to request manual removal; your subscription record is then removed.</p>
     <p>Resend processes email addresses and message content to deliver those emails. BoardExamTracker does not sell subscriber addresses or use them to target advertisements. Unconfirmed signup records expire after 24 hours.</p>
+
+    <h2>Anonymous live viewer count</h2>
+    <p>To show the site administrator an approximate number of active site sessions, the site creates a random tab identifier and sends a heartbeat while the page is visible. The identifier is not based on your email address or name. Active sessions expire from the count after 90 seconds without a heartbeat. This feature uses Upstash Redis in production; Redis processes the random identifier and last-seen time for this purpose.</p>
 
     <h2>Result data and external links</h2>
     <p>The site retrieves publicly available examination announcements from PRC.gov.ph on its server. Opening a link to PRC or to a document hosted by another provider takes you to that external service, which handles your visit under its own privacy policy.</p>
@@ -43,7 +47,7 @@
     <p>You can manage Google’s personalized advertising through <a href="https://adssettings.google.com/" rel="noopener noreferrer">Google Ads Settings</a> and opt out of some participating vendors’ personalized advertising through <a href="https://www.aboutads.info/choices/" rel="noopener noreferrer">YourAdChoices</a>. You can also manage cookies in your browser. If personalized ads are served to visitors in regions requiring a consent management platform, the site must configure an eligible consent message before enabling that serving.</p>
 
     <h2>Server operations</h2>
-    <p>The site’s hosting environment may process basic request information, such as an IP address and browser details, to deliver pages and protect the service. Subscriber records are kept in the site’s private application storage and are not placed in the public website files.</p>
+    <p>The site’s hosting environment may process basic request information, such as an IP address and browser details, to deliver pages and protect the service. Subscriber records are kept in private application storage and are not placed in the public website files. In production, Upstash Redis stores subscriber records and short-lived random viewer identifiers.</p>
 
     <h2>Changes</h2>
     <p>This policy may be updated when site features or advertising settings change. The date above indicates the latest revision.</p>

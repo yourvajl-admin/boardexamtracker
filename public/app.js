@@ -341,7 +341,9 @@ fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
     emailAlertButton.disabled = !emailAlertsEnabled;
     emailAlertStatus.textContent = data.available
       ? 'You’ll receive a confirmation email before alerts begin. Unsubscribe from any alert email.'
-      : 'Email alerts are not configured on this server yet.';
+      : data.reason === 'storage'
+        ? 'Email alerts are temporarily unavailable while secure subscriber storage is being configured.'
+        : 'Email alerts are not configured on this server yet.';
   })
   .catch(() => {
     emailAlertsEnabled = false;

@@ -6,13 +6,16 @@ const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSI
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
 const { adminConfig, authenticate, clearSessionCookie, createSession, isAuthenticated, setSessionCookie } = require('./admin-auth');
+const { getActiveViewerCount, recordViewerHeartbeat } = require('./viewers');
 const {
   addPendingSubscriber,
   confirmSubscriber,
-  getSubscriberCounts,
+  isPersistentStorageConfigured,
   listConfirmedSubscribers,
+  listSubscribersForAdmin,
   markConfirmationSent,
   removeSubscriber,
+  removeSubscriberByEmail,
 } = require('./subscriptions');
 
 const app = express();
@@ -21,6 +24,7 @@ const AUTO_REFRESH_MS = 5 * 60 * 1000;
 let pendingFetch = null;
 const announcementCache = new Map();
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
 app.use((req, res, next) => {
   const origin = req.get('origin');
@@ -103,14 +107,57 @@ app.post('/api/admin/logout', (req, res) => {
   clearSessionCookie(res, req);
   return res.json({ authenticated: false });
 });
-app.get('/api/admin/overview', requireAdmin, (_req, res) => {
-  const counts = getSubscriberCounts();
-  res.json({
-    emailConfigured: isEmailConfigured(),
-    sender: process.env.EMAIL_FROM || null,
-    publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
-    subscribers: counts,
-  });
+app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
+  try {
+    const subscribers = await listSubscribersForAdmin();
+    return res.json({ subscribers, persistentStorage: isPersistentStorageConfigured(), production: process.env.NODE_ENV === 'production' });
+  } catch (error) {
+    console.error('Could not load admin subscriber list:', error.message);
+    return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
+  }
+});
+app.post('/api/admin/subscribers/unsubscribe', requireAdmin, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+    return res.status(400).json({ error: 'Enter a valid subscriber email.' });
+  }
+  if (process.env.NODE_ENV === 'production' && !isPersistentStorageConfigured()) {
+    return res.status(503).json({ error: 'Persistent subscriber storage is required for admin changes in production.' });
+  }
+  try {
+    const removed = await removeSubscriberByEmail(email);
+    return removed ? res.json({ removed: true }) : res.status(404).json({ error: 'Subscriber not found.' });
+  } catch (error) {
+    console.error('Could not manually unsubscribe subscriber:', error.message);
+    return res.status(503).json({ error: 'Subscriber storage is unavailable. Try again later.' });
+  }
+});
+app.get('/api/admin/viewers', requireAdmin, async (_req, res) => {
+  try {
+    return res.json({ ...await getActiveViewerCount(), production: process.env.NODE_ENV === 'production' });
+  } catch (error) {
+    console.error('Could not load active viewer count:', error.message);
+    return res.status(503).json({ error: 'Shared viewer storage is unavailable.' });
+  }
+});
+const viewerHeartbeatAttempts = new Map();
+function allowViewerHeartbeat(req) {
+  const now = Date.now();
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (viewerHeartbeatAttempts.get(ip) || []).filter((timestamp) => now - timestamp < 60 * 1000);
+  if (recent.length >= 120) return false;
+  recent.push(now);
+  viewerHeartbeatAttempts.set(ip, recent);
+  return true;
+}
+app.post('/api/viewers/heartbeat', async (req, res) => {
+  if (!allowViewerHeartbeat(req)) return res.status(429).json({ error: 'Viewer check limit reached.' });
+  try {
+    const count = await recordViewerHeartbeat(req.body?.id);
+    return res.json({ ok: true, ...count });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Could not record viewer.' });
+  }
 });
 app.get('/ads.txt', (_req, res) => {
   const clientId = process.env.ADSENSE_CLIENT_ID || '';
@@ -147,7 +194,7 @@ function publicBaseUrl() {
 }
 
 async function notifySubscribers(results) {
-  const subscribers = listConfirmedSubscribers();
+  const subscribers = await listConfirmedSubscribers();
   if (!subscribers.length) return;
   const baseUrl = publicBaseUrl();
   const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(result.url)}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
@@ -184,7 +231,14 @@ function allowEmailAttempt(req) {
   return true;
 }
 
-app.get('/api/notifications/status', (_req, res) => res.json({ available: isEmailConfigured() }));
+app.get('/api/notifications/status', (_req, res) => {
+  const emailReady = isEmailConfigured();
+  const persistentStorageReady = process.env.NODE_ENV !== 'production' || isPersistentStorageConfigured();
+  res.json({
+    available: emailReady && persistentStorageReady,
+    reason: !emailReady ? 'email' : !persistentStorageReady ? 'storage' : null,
+  });
+});
 
 app.post('/api/notifications/subscribe', async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -195,7 +249,10 @@ app.post('/api/notifications/subscribe', async (req, res) => {
   if (!isEmailConfigured()) return res.status(503).json({ error: 'Email alerts are not configured on this server yet.' });
 
   try {
-    const subscription = addPendingSubscriber(email);
+    if (process.env.NODE_ENV === 'production' && !isPersistentStorageConfigured()) {
+      return res.status(503).json({ error: 'Email alerts are temporarily unavailable while persistent subscriber storage is configured.' });
+    }
+    const subscription = await addPendingSubscriber(email);
     if (subscription.status === 'subscribed') return res.json({ message: 'This email is already subscribed to result alerts.' });
     if (subscription.status === 'pending') return res.json({ message: 'Check your inbox for the confirmation email.' });
     const confirmationUrl = `${publicBaseUrl()}/api/email/confirm?token=${encodeURIComponent(subscription.token)}`;
@@ -205,7 +262,7 @@ app.post('/api/notifications/subscribe', async (req, res) => {
       html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">Confirm your email alerts</h1><p>Click below to confirm you want to receive email when new PRC exam result announcements are found.</p><p><a href="${escapeEmailHtml(confirmationUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">Confirm email alerts</a></p><p>If you did not request these alerts, you can ignore this email.</p></div>`,
       text: `Confirm email alerts for BoardExamTracker by opening: ${confirmationUrl}\n\nIf you did not request these alerts, ignore this email.`,
     });
-    markConfirmationSent(subscription.token);
+    await markConfirmationSent(subscription.token);
     return res.json({ message: 'Check your inbox for a confirmation email to activate alerts.' });
   } catch (error) {
     console.error('Could not process email alert signup:', error.message);
@@ -219,9 +276,9 @@ app.get('/api/email/confirm', (req, res) => {
   res.type('html').send(emailActionPage('Confirm email alerts', 'Confirm that you want to receive an email when new PRC exam results are found.', token, '/api/email/confirm', 'Confirm subscription'));
 });
 
-app.post('/api/email/confirm', express.urlencoded({ extended: false, limit: '2kb' }), (req, res) => {
+app.post('/api/email/confirm', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {
   const token = String(req.body?.token || '');
-  const confirmed = /^[a-f0-9]{64}$/.test(token) && confirmSubscriber(token);
+  const confirmed = /^[a-f0-9]{64}$/.test(token) && await confirmSubscriber(token);
   emailResultPage(res, confirmed ? 'Email alerts activated' : 'Confirmation link expired', confirmed ? 'You will receive an email when new PRC exam results are found. You can unsubscribe from any alert email.' : 'Request a new confirmation email from the signup form and try again.', confirmed);
 });
 
@@ -231,9 +288,9 @@ app.get('/api/email/unsubscribe', (req, res) => {
   res.type('html').send(emailActionPage('Unsubscribe from email alerts', 'Confirm that you want to stop receiving BoardExamTracker email alerts.', token, '/api/email/unsubscribe', 'Unsubscribe'));
 });
 
-app.post('/api/email/unsubscribe', express.urlencoded({ extended: false, limit: '2kb' }), (req, res) => {
+app.post('/api/email/unsubscribe', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {
   const token = String(req.body?.token || '');
-  const removed = /^[a-f0-9]{64}$/.test(token) && removeSubscriber(token);
+  const removed = /^[a-f0-9]{64}$/.test(token) && await removeSubscriber(token);
   emailResultPage(res, removed ? 'Unsubscribed' : 'Link not found', removed ? 'This email address has been removed from BoardExamTracker alerts.' : 'This unsubscribe link is invalid or has already been used.', removed);
 });
 

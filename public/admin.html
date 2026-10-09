@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#101b2c">
   <title>Admin | BoardExamTracker</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/admin.css?v=20261009-1">
-  <script src="/admin.js?v=20261009-1" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=20261009-2">
+  <script src="/admin.js?v=20261009-2" defer></script>
 </head>
 <body>
   <main class="admin-shell">
@@ -32,16 +32,11 @@
       <a class="back-link" href="/">Return to BoardExamTracker</a>
     </section>
     <section id="dashboard-view" class="admin-panel" hidden>
-      <div class="dashboard-top"><div><p class="eyebrow">PRIVATE ADMIN AREA</p><h1>Email alerts</h1><p>Private configuration status for BoardExamTracker notifications.</p></div><button id="logout-button" class="secondary-button" type="button">Sign out</button></div>
-      <div id="overview-status" class="notice" role="status" aria-live="polite">Loading configuration…</div>
-      <div class="status-grid">
-        <article class="status-card"><span>Email delivery</span><strong id="email-state">—</strong></article>
-        <article class="status-card"><span>Sender address</span><strong id="email-sender">—</strong></article>
-        <article class="status-card"><span>Confirmed subscribers</span><strong id="subscriber-confirmed">—</strong></article>
-        <article class="status-card"><span>Pending confirmations</span><strong id="subscriber-pending">—</strong></article>
-      </div>
-      <section class="setup-section"><h2>Configure or change the sender</h2><p>Provider credentials are kept outside this page. In your hosting dashboard, set <code>RESEND_API_KEY</code>, <code>EMAIL_FROM</code>, and <code>PUBLIC_BASE_URL</code> as private environment variables, then redeploy.</p><p>For the sender address, use an address on a domain verified with Resend, such as <code>BoardExamTracker &lt;alerts@yourdomain.com&gt;</code>. Never put the API key in this page or in GitHub.</p><a href="https://resend.com/docs/dashboard/domains/introduction" target="_blank" rel="noopener noreferrer">Resend domain setup <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></svg></a></section>
-      <section class="setup-section"><h2>Subscriber storage</h2><p id="storage-note">Subscriber storage details are loading.</p><p>Use persistent private storage for subscriber records before relying on alerts in a serverless deployment.</p></section>
+      <div class="dashboard-top"><div><p class="eyebrow">PRIVATE ADMIN AREA</p><h1>Subscribers</h1><p>Search the alert list or manually unsubscribe someone who asks.</p></div><button id="logout-button" class="secondary-button" type="button">Sign out</button></div>
+      <section class="viewer-panel" aria-live="polite"><div><span class="live-dot"></span><strong>Viewers online now</strong></div><strong id="viewer-count" class="viewer-number">—</strong><small id="viewer-status">Checking live viewer count…</small></section>
+      <p id="dashboard-status" class="notice" role="status" aria-live="polite" hidden></p>
+      <div class="subscriber-toolbar"><label for="subscriber-search">Search subscriber emails</label><input id="subscriber-search" type="search" placeholder="Search by email address…" autocomplete="off"><span id="subscriber-count" class="subscriber-count" aria-live="polite"></span></div>
+      <div class="table-scroll"><table><thead><tr><th scope="col">Email address</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscriber emails match this search.</p></div>
       <a class="back-link" href="/">Return to the public website</a>
     </section>
     <footer>BoardExamTracker is an independent results information platform.</footer>
