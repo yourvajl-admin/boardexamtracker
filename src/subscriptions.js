@@ -85,9 +85,18 @@ function listConfirmedSubscribers() {
   return readSubscribers().filter((item) => item.confirmedAt && item.unsubscribeToken);
 }
 
+function getSubscriberCounts() {
+  const entries = readSubscribers();
+  return {
+    confirmed: entries.filter((item) => item.confirmedAt && item.unsubscribeToken).length,
+    pending: entries.filter((item) => !item.confirmedAt && item.confirmToken).length,
+  };
+}
+
 module.exports = {
   addPendingSubscriber,
   confirmSubscriber,
+  getSubscriberCounts,
   listConfirmedSubscribers,
   markConfirmationSent,
   removeSubscriber,

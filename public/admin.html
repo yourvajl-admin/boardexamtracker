@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="theme-color" content="#101b2c">
+  <title>Admin | BoardExamTracker</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin.css?v=20261009-1">
+  <script src="/admin.js?v=20261009-1" defer></script>
+</head>
+<body>
+  <main class="admin-shell">
+    <a class="admin-brand" href="/" aria-label="BoardExamTracker home"><img src="/logo.svg" alt=""><span>BoardExamTracker <small>Admin</small></span></a>
+    <section id="loading-view" class="admin-panel" aria-live="polite"><p>Checking admin access…</p></section>
+    <section id="setup-view" class="admin-panel" hidden>
+      <p class="eyebrow">ADMIN ACCESS</p><h1>Finish private setup</h1>
+      <p>Admin sign-in is not configured yet. Add these private environment variables to the server, then redeploy:</p>
+      <ul class="setup-list"><li><code>ADMIN_USERNAME</code></li><li><code>ADMIN_PASSWORD</code></li><li><code>ADMIN_SESSION_SECRET</code> (at least 32 characters)</li></ul>
+      <p class="hint">Keep these values out of source files and GitHub. The session secret signs secure, eight-hour admin cookies.</p>
+      <a class="back-link" href="/">Return to BoardExamTracker</a>
+    </section>
+    <section id="login-view" class="admin-panel" hidden>
+      <p class="eyebrow">PRIVATE ADMIN AREA</p><h1>Sign in</h1>
+      <p>Use the admin credentials configured for this site.</p>
+      <form id="login-form">
+        <label for="admin-username">Username</label><input id="admin-username" name="username" autocomplete="username" required maxlength="120">
+        <label for="admin-password">Password</label><input id="admin-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+        <button type="submit">Sign in</button><p id="login-status" class="status" role="status" aria-live="polite"></p>
+      </form>
+      <a class="back-link" href="/">Return to BoardExamTracker</a>
+    </section>
+    <section id="dashboard-view" class="admin-panel" hidden>
+      <div class="dashboard-top"><div><p class="eyebrow">PRIVATE ADMIN AREA</p><h1>Email alerts</h1><p>Private configuration status for BoardExamTracker notifications.</p></div><button id="logout-button" class="secondary-button" type="button">Sign out</button></div>
+      <div id="overview-status" class="notice" role="status" aria-live="polite">Loading configuration…</div>
+      <div class="status-grid">
+        <article class="status-card"><span>Email delivery</span><strong id="email-state">—</strong></article>
+        <article class="status-card"><span>Sender address</span><strong id="email-sender">—</strong></article>
+        <article class="status-card"><span>Confirmed subscribers</span><strong id="subscriber-confirmed">—</strong></article>
+        <article class="status-card"><span>Pending confirmations</span><strong id="subscriber-pending">—</strong></article>
+      </div>
+      <section class="setup-section"><h2>Configure or change the sender</h2><p>Provider credentials are kept outside this page. In your hosting dashboard, set <code>RESEND_API_KEY</code>, <code>EMAIL_FROM</code>, and <code>PUBLIC_BASE_URL</code> as private environment variables, then redeploy.</p><p>For the sender address, use an address on a domain verified with Resend, such as <code>BoardExamTracker &lt;alerts@yourdomain.com&gt;</code>. Never put the API key in this page or in GitHub.</p><a href="https://resend.com/docs/dashboard/domains/introduction" target="_blank" rel="noopener noreferrer">Resend domain setup <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"/></svg></a></section>
+      <section class="setup-section"><h2>Subscriber storage</h2><p id="storage-note">Subscriber storage details are loading.</p><p>Use persistent private storage for subscriber records before relying on alerts in a serverless deployment.</p></section>
+      <a class="back-link" href="/">Return to the public website</a>
+    </section>
+    <footer>BoardExamTracker is an independent results information platform.</footer>
+  </main>
+</body>
+</html>

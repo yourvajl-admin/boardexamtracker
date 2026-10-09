@@ -5,9 +5,11 @@ const path = require('node:path');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
+const { adminConfig, authenticate, clearSessionCookie, createSession, isAuthenticated, setSessionCookie } = require('./admin-auth');
 const {
   addPendingSubscriber,
   confirmSubscriber,
+  getSubscriberCounts,
   listConfirmedSubscribers,
   markConfirmationSent,
   removeSubscriber,
@@ -20,13 +22,36 @@ let pendingFetch = null;
 const announcementCache = new Map();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '10kb' }));
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  if (!origin || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  const forwardedProto = String(req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const protocol = forwardedProto || req.protocol;
+  const host = req.get('host');
+  try {
+    if (new URL(origin).origin !== `${protocol}://${host}`) return res.status(403).json({ error: 'Cross-origin request blocked.' });
+  } catch {
+    return res.status(403).json({ error: 'Invalid request origin.' });
+  }
+  return next();
+});
 app.use(express.static(path.join(__dirname, '..', 'public'), {
   maxAge: 0,
   etag: true,
   setHeaders(res, filePath) {
     if (/\.(html|css|js)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    if (path.basename(filePath) === 'admin.html') {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+      res.setHeader('X-Frame-Options', 'DENY');
+    }
   },
 }));
+app.use('/api/admin', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Vary', 'Cookie');
+  return next();
+});
 
 function getAdSenseConfig() {
   const clientId = process.env.ADSENSE_CLIENT_ID || '';
@@ -38,6 +63,55 @@ function getAdSenseConfig() {
 }
 
 app.get('/api/adsense-config', (_req, res) => res.json(getAdSenseConfig()));
+
+const adminLoginAttempts = new Map();
+function allowAdminLogin(req) {
+  const now = Date.now();
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const recent = (adminLoginAttempts.get(ip) || []).filter((timestamp) => now - timestamp < 15 * 60 * 1000);
+  if (recent.length >= 8) return false;
+  recent.push(now);
+  adminLoginAttempts.set(ip, recent);
+  return true;
+}
+
+function requireAdmin(req, res, next) {
+  if (isAuthenticated(req)) return next();
+  return res.status(401).json({ error: 'Admin sign-in required.' });
+}
+
+app.get('/admin', (_req, res) => {
+  res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive', 'X-Frame-Options': 'DENY' });
+  res.redirect(302, '/admin.html');
+});
+app.get('/api/admin/session', (_req, res) => {
+  const config = adminConfig();
+  res.json({ configured: config.configured, authenticated: config.configured && isAuthenticated(_req) });
+});
+app.post('/api/admin/login', (req, res) => {
+  if (!adminConfig().configured) return res.status(503).json({ error: 'Admin access is not configured on this server. Add ADMIN_USERNAME, ADMIN_PASSWORD, and a 32-character ADMIN_SESSION_SECRET.' });
+  if (!allowAdminLogin(req)) return res.status(429).json({ error: 'Too many sign-in attempts. Wait 15 minutes before trying again.' });
+  const username = typeof req.body?.username === 'string' ? req.body.username : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (username.length > 120 || password.length > 1024 || !authenticate(username, password)) {
+    return res.status(401).json({ error: 'Username or password is incorrect.' });
+  }
+  setSessionCookie(res, req, createSession(username, adminConfig().secret));
+  return res.json({ authenticated: true });
+});
+app.post('/api/admin/logout', (req, res) => {
+  clearSessionCookie(res, req);
+  return res.json({ authenticated: false });
+});
+app.get('/api/admin/overview', requireAdmin, (_req, res) => {
+  const counts = getSubscriberCounts();
+  res.json({
+    emailConfigured: isEmailConfigured(),
+    sender: process.env.EMAIL_FROM || null,
+    publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
+    subscribers: counts,
+  });
+});
 app.get('/ads.txt', (_req, res) => {
   const clientId = process.env.ADSENSE_CLIENT_ID || '';
   if (!/^ca-pub-\d+$/.test(clientId)) return res.status(404).type('text/plain').send('');
@@ -202,11 +276,15 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/results/:slug', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
-app.listen(port, () => {
-  console.log(`BoardExamTracker listening on http://localhost:${port}`);
-  refresh().catch((error) => console.warn('Initial PRC refresh failed:', error.message));
-  const refreshTimer = setInterval(() => {
-    refresh().catch((error) => console.warn('Scheduled PRC refresh failed:', error.message));
-  }, AUTO_REFRESH_MS);
-  refreshTimer.unref();
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`BoardExamTracker listening on http://localhost:${port}`);
+    refresh().catch((error) => console.warn('Initial PRC refresh failed:', error.message));
+    const refreshTimer = setInterval(() => {
+      refresh().catch((error) => console.warn('Scheduled PRC refresh failed:', error.message));
+    }, AUTO_REFRESH_MS);
+    refreshTimer.unref();
+  });
+}
+
+module.exports = app;

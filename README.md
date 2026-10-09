@@ -51,6 +51,12 @@ Set `PORT` to change the default port (3000). Email alerts use Resend and requir
 
 Copy `.env.example` to `.env`, fill in those values, then restart the server. Without them, the signup form reports that email alerts are unavailable and does not accept subscriptions. The first full archive load establishes the baseline and does not send a large batch of old results; alerts are sent for announcements discovered on later five-minute checks. Subscriber addresses and confirmation tokens are stored in the ignored `data/email-subscribers.json` file, so keep that directory on persistent private storage and include it in protected backups. The user confirms subscription by email, and each alert contains an unsubscribe link.
 
+## Private admin page
+
+Visit `/admin` to sign in to the private email-alert status page. It is not linked from public navigation. Configure `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_SESSION_SECRET` in the server environment; the session secret must be at least 32 characters (`openssl rand -hex 32` generates one). Use a unique password. Admin sessions use an HTTP-only, same-site cookie and expire after eight hours. Sign-in attempts are rate-limited. The dashboard shows whether email delivery is configured and subscriber counts; it never displays the Resend API key. On Vercel, enter these values under Project Settings → Environment Variables and redeploy. Do not commit real credentials or send them in chat.
+
+The current subscriber store is a local JSON file. Vercel Functions do not provide durable writable file storage, so connect a persistent database before using this subscriber feature on Vercel. The admin page reports this limitation rather than implying the local file is durable.
+
 ## API
 
 `GET /api/results` returns `{ results, lastUpdated, cached, stale, source }`. Add `?refresh=true` to bypass the five-minute fresh-cache window. A cache refresh request is shared with any concurrent refresh. If PRC is unavailable, stale results are returned when present; without a cache, the endpoint returns HTTP 503 and an empty result list.
