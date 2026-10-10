@@ -31,8 +31,9 @@ const emailAlertAvailability = document.querySelector('#email-alert-availability
 const emailAlertButton = emailAlertForm.querySelector('button[type="submit"]');
 let emailAlertsEnabled = false;
 let adsenseConfig = null;
-let adsenseScriptLoading = false;
-let adsenseLibraryLoaded = false;
+let adsenseScriptElement = document.querySelector('script[src^="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]');
+let adsenseScriptLoading = Boolean(adsenseScriptElement && !window.adsbygoogle);
+let adsenseLibraryLoaded = Boolean(window.adsbygoogle);
 let adsenseUnitInitialized = false;
 
 function escapeHtml(value = '') {
@@ -100,9 +101,26 @@ function updateAdSlot() {
     && state.filter === 'all'
     && state.results.length >= 6;
   adSlot.hidden = !showAd;
-  if (!adsenseConfig?.clientId || adsenseScriptLoading || location.pathname.startsWith('/results/')) return;
+  if (!adsenseConfig?.clientId || location.pathname.startsWith('/results/')) return;
   if (adsenseLibraryLoaded) {
     if (!adSlot.hidden) initializeAdUnit();
+    return;
+  }
+
+  if (adsenseScriptElement) {
+    if (!adsenseScriptLoading) adsenseScriptLoading = true;
+    if (!adsenseScriptElement.dataset.boardExamTrackerListeners) {
+      adsenseScriptElement.dataset.boardExamTrackerListeners = 'true';
+      adsenseScriptElement.addEventListener('load', () => {
+        adsenseLibraryLoaded = true;
+        adsenseScriptLoading = false;
+        updateAdSlot();
+      }, { once: true });
+      adsenseScriptElement.addEventListener('error', () => {
+        adsenseScriptLoading = false;
+        adSlot.hidden = true;
+      }, { once: true });
+    }
     return;
   }
 
@@ -111,6 +129,7 @@ function updateAdSlot() {
   script.async = true;
   script.crossOrigin = 'anonymous';
   script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(adsenseConfig.clientId)}`;
+  adsenseScriptElement = script;
   script.onload = () => {
     adsenseLibraryLoaded = true;
     adsenseScriptLoading = false;
