@@ -62,22 +62,6 @@ async function loadResult() {
     const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(resultSlug)}`;
     const description = (item.description || `View the ${item.category || 'professional licensure'} result documents linked to this announcement.`).slice(0, 300);
     setMeta(item, description, canonical);
-    const schema = {
-      '@context': 'https://schema.org',
-      '@type': 'Article',
-      headline: item.title,
-      description,
-      datePublished: item.date,
-      author: { '@type': 'Organization', name: 'BoardExamTracker' },
-      publisher: { '@type': 'Organization', name: 'BoardExamTracker' },
-      mainEntityOfPage: canonical,
-      citation: item.url,
-    };
-    const structuredData = document.createElement('script');
-    structuredData.type = 'application/ld+json';
-    structuredData.textContent = JSON.stringify(schema);
-    document.head.append(structuredData);
-
     resultContent.innerHTML = `<div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p id="result-summary" class="detail-summary">${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p><div class="detail-source-note"><span aria-hidden="true">✓</span><p>BoardExamTracker is an independent information platform. The attached files are served by the original source. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="result-facts" class="result-facts"></div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading files linked by the announcement…</p></div></section>`;
 
     const linksResponse = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`, { headers: { Accept: 'application/json' } });

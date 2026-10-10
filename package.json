@@ -9,11 +9,13 @@
     "dev": "node --watch src/server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",
+    "@vercel/og": "^1.0.3",
     "cheerio": "^1.0.0",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "react": "^19.3.0"
   }
 }

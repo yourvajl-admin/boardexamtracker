@@ -4,6 +4,7 @@ const express = require('express');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const React = require('react');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
@@ -33,6 +34,13 @@ let pendingArchiveFetch = null;
 let archiveCacheLoaded = false;
 const announcementCache = new Map();
 let localAdsEnabled = null;
+let recentResultIndex = null;
+let recentResultIndexFetchedAt = 0;
+let recentResultIndexPromise = null;
+let fullResultIndex = null;
+let fullResultIndexFetchedAt = 0;
+let fullResultIndexPromise = null;
+let imageResponseModulePromise = null;
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
@@ -373,7 +381,8 @@ function escapeEmailHtml(value = '') {
 }
 
 function publicBaseUrl() {
-  return process.env.PUBLIC_BASE_URL.replace(/\/$/, '');
+  if (process.env.NODE_ENV === 'production') return 'https://www.boardexamtracker.com';
+  return (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/$/, '');
 }
 
 function boardResultPageUrl(baseUrl, result) {
@@ -382,6 +391,88 @@ function boardResultPageUrl(baseUrl, result) {
   const pathParts = new URL(officialUrl).pathname.split('/').filter(Boolean);
   const slug = decodeURIComponent(pathParts[pathParts.length - 1] || 'result');
   return `${baseUrl}/results/${encodeURIComponent(slug)}`;
+}
+
+function resultSlug(result) {
+  const officialUrl = normalizeUrl(result?.url);
+  if (!officialUrl) return '';
+  return decodeURIComponent(new URL(officialUrl).pathname.split('/').filter(Boolean).pop() || '');
+}
+
+async function findResultBySlug(slug) {
+  const cachedResults = getCache()?.results || [];
+  const cachedMatch = cachedResults.find((result) => resultSlug(result) === slug);
+  if (cachedMatch) return cachedMatch;
+
+  if (!recentResultIndex || Date.now() - recentResultIndexFetchedAt > 5 * 60 * 1000) {
+    if (!recentResultIndexPromise) {
+      recentResultIndexPromise = fetchResults({ maxPage: 2 })
+        .then((results) => {
+          recentResultIndex = results;
+          recentResultIndexFetchedAt = Date.now();
+          return results;
+        })
+        .finally(() => { recentResultIndexPromise = null; });
+    }
+    await recentResultIndexPromise;
+  }
+  const recentMatch = recentResultIndex?.find((result) => resultSlug(result) === slug);
+  if (recentMatch) return recentMatch;
+
+  if (archiveCacheLoaded) return (getCache()?.results || []).find((result) => resultSlug(result) === slug) || null;
+  if (!fullResultIndex || Date.now() - fullResultIndexFetchedAt > 5 * 60 * 1000) {
+    if (!fullResultIndexPromise) {
+      fullResultIndexPromise = fetchResults()
+        .then((results) => {
+          fullResultIndex = results;
+          fullResultIndexFetchedAt = Date.now();
+          return results;
+        })
+        .finally(() => { fullResultIndexPromise = null; });
+    }
+    await fullResultIndexPromise;
+  }
+  return fullResultIndex?.find((result) => resultSlug(result) === slug) || null;
+}
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+}
+
+function replaceMetaValue(html, pattern, value) {
+  return html.replace(pattern, (_match, prefix, suffix) => `${prefix}${value}${suffix}`);
+}
+
+function createResultCardElement(item) {
+  const h = React.createElement;
+  const truncate = (value, limit) => String(value || '').length > limit ? `${String(value).slice(0, limit - 1).trimEnd()}…` : String(value || '');
+  const title = truncate(item.title, 118);
+  const summary = truncate(item.description || `The ${item.category || 'professional licensure'} examination result is available. Open the result page to review files linked by the announcement.`, 150);
+  const date = item.date ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`)) : 'Release date on result page';
+  const styles = {
+    root: { display: 'flex', width: '100%', height: '100%', flexDirection: 'column', justifyContent: 'space-between', padding: '54px 64px', backgroundColor: '#101b2c', color: '#e8f0fa', fontFamily: 'Arial, sans-serif' },
+    brandRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+    brand: { display: 'flex', alignItems: 'center', gap: 12, fontSize: 26, fontWeight: 700, color: '#ffffff' },
+    mark: { display: 'flex', justifyContent: 'center', alignItems: 'center', width: 40, height: 40, borderRadius: 12, backgroundColor: '#1d4365', color: '#78d6b5', fontSize: 25, fontWeight: 700 },
+    tag: { display: 'flex', alignItems: 'center', padding: '10px 15px', borderRadius: 18, backgroundColor: '#153b38', color: '#83e0c2', fontSize: 16, fontWeight: 700 },
+    eyebrow: { display: 'flex', color: '#73b6ee', fontSize: 17, fontWeight: 700, letterSpacing: 4 },
+    category: { display: 'flex', alignSelf: 'flex-start', marginTop: 13, padding: '9px 13px', borderRadius: 8, backgroundColor: '#203e5b', color: '#bfddfa', fontSize: 15, fontWeight: 700, letterSpacing: 1 },
+    title: { display: 'flex', marginTop: 18, maxHeight: 150, overflow: 'hidden', fontSize: 42, lineHeight: 1.16, fontWeight: 700, color: '#edf3fb' },
+    date: { display: 'flex', marginTop: 10, fontSize: 19, fontWeight: 600, color: '#9eb0c6' },
+    summary: { display: 'flex', maxWidth: 1030, fontSize: 23, lineHeight: 1.4, color: '#d1dce9' },
+    footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 18px', borderRadius: 12, backgroundColor: '#153a35', color: '#c8e7dd', fontSize: 16 },
+  };
+  return h('div', { style: styles.root },
+    h('div', { style: styles.brandRow },
+      h('div', { style: styles.brand }, h('div', { style: styles.mark }, '✓'), h('span', null, 'BoardExamTracker')),
+      h('div', { style: styles.tag }, 'PHILIPPINE BOARD EXAM RESULT')),
+    h('div', null,
+      h('div', { style: styles.eyebrow }, 'BOARD EXAM RESULT'),
+      h('div', { style: styles.category }, truncate(item.category || 'PRC Examination Result', 40).toUpperCase()),
+      h('div', { style: styles.title }, title),
+      h('div', { style: styles.date }, `Released ${date}`)),
+    h('div', { style: styles.summary }, summary),
+    h('div', { style: styles.footer }, h('span', null, 'Independent results guide · Source: PRC.gov.ph'), h('span', null, 'boardexamtracker.com')));
 }
 
 async function notifySubscribers(results) {
@@ -590,13 +681,64 @@ app.get('/api/announcement-links', async (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/api/result-card/:slug.png', async (req, res) => {
+  const slug = String(req.params.slug || '').replace(/\.png$/i, '');
+  if (!/^[a-z0-9-]{1,180}$/i.test(slug)) return res.status(400).type('text/plain').send('Invalid result slug.');
+  try {
+    const result = await findResultBySlug(slug);
+    if (!result) return res.status(404).type('text/plain').send('Result not found.');
+    imageResponseModulePromise ||= import('@vercel/og');
+    const { ImageResponse } = await imageResponseModulePromise;
+    const image = new ImageResponse(createResultCardElement(result), {
+      width: 1200,
+      height: 630,
+      headers: { 'Cache-Control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800' },
+    });
+    const png = Buffer.from(await image.arrayBuffer());
+    return res.status(200).type('png').set('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800').send(png);
+  } catch (error) {
+    console.error('Could not generate result share image:', error.message);
+    return res.status(502).type('text/plain').send('Could not generate result preview image.');
+  }
+});
 app.get('/results/:slug', async (req, res) => {
   try {
     const html = await fs.readFile(path.join(__dirname, '..', 'public', 'result.html'), 'utf8');
-    const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(req.params.slug)}`;
-    const page = html
-      .replace('rel="canonical" href="https://www.boardexamtracker.com/"', `rel="canonical" href="${canonical}"`)
-      .replace('property="og:url" content="https://www.boardexamtracker.com/"', `property="og:url" content="${canonical}"`);
+    const slug = String(req.params.slug || '');
+    const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(slug)}`;
+    let result = null;
+    if (/^[a-z0-9-]{1,180}$/i.test(slug)) {
+      try { result = await findResultBySlug(slug); }
+      catch (error) { console.warn(`Could not prepare share metadata for ${slug}:`, error.message); }
+    }
+    const fallbackTitle = slug.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()) || 'Board Exam Result';
+    const title = result?.title || fallbackTitle;
+    const description = (result?.description || 'View this Philippine board exam result and the files linked by its public announcement.').slice(0, 300);
+    const imageUrl = `https://www.boardexamtracker.com/api/result-card/${encodeURIComponent(slug)}.png`;
+    const safeTitle = escapeHtml(`${title} | BoardExamTracker`);
+    const safeDescription = escapeHtml(description);
+    const schema = result ? `<script type="application/ld+json">${JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'Article',
+      headline: result.title,
+      description,
+      datePublished: result.date,
+      author: { '@type': 'Organization', name: 'BoardExamTracker' },
+      publisher: { '@type': 'Organization', name: 'BoardExamTracker' },
+      mainEntityOfPage: canonical,
+      citation: result.url,
+    }).replace(/</g, '\\u003c')}</script>` : '';
+    let page = html.replace(/<title>[^<]*<\/title>/, `<title>${safeTitle}</title>`);
+    page = replaceMetaValue(page, /(<meta name="description" content=")[^"]*(">)/, safeDescription);
+    page = replaceMetaValue(page, /(<meta property="og:title" content=")[^"]*(">)/, safeTitle);
+    page = replaceMetaValue(page, /(<meta property="og:description" content=")[^"]*(">)/, safeDescription);
+    page = replaceMetaValue(page, /(<meta property="og:url" content=")[^"]*(">)/, canonical);
+    page = replaceMetaValue(page, /(<meta property="og:image" content=")[^"]*(">)/, imageUrl);
+    page = replaceMetaValue(page, /(<meta property="og:image:alt" content=")[^"]*(">)/, escapeHtml(`Preview image for ${title}`));
+    page = replaceMetaValue(page, /(<meta name="twitter:title" content=")[^"]*(">)/, safeTitle);
+    page = replaceMetaValue(page, /(<meta name="twitter:description" content=")[^"]*(">)/, safeDescription);
+    page = replaceMetaValue(page, /(<meta name="twitter:image" content=")[^"]*(">)/, imageUrl);
+    page = page.replace('</head>', `${schema}</head>`);
     res.type('html').send(page);
   } catch {
     res.status(500).type('text/plain').send('Could not load the result page.');
