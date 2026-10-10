@@ -140,8 +140,8 @@ function renderAdsControl(data) {
     adsControlStatus.textContent = 'Shared Upstash Redis is required to save this setting reliably in production.';
   } else {
     adsControlStatus.textContent = data.enabled
-      ? 'Ads are on for eligible homepage visitors. Open pages reflect changes within about 30 seconds.'
-      : 'Ads are off. Turn them on when you want the homepage ad placement displayed.';
+      ? 'Ads are on. A newly detected exam result will turn them off automatically; open pages reflect changes within about 30 seconds.'
+      : 'Ads are off. Review new results, then turn them on here when ready.';
   }
 }
 
@@ -168,7 +168,7 @@ adsToggleButton.addEventListener('click', async () => {
     adsToggleButton.textContent = data.enabled ? 'Turn ads off' : 'Turn ads on';
     adsToggleButton.classList.toggle('is-on', data.enabled);
     adsControlStatus.textContent = data.enabled
-      ? 'Ads are on for eligible homepage visitors. Open pages reflect changes within about 30 seconds.'
+      ? 'Ads are on. A newly detected exam result will turn them off automatically; open pages reflect changes within about 30 seconds.'
       : 'Ads are off. Open pages will hide the placement within about 30 seconds.';
     await loadAdsControl();
   } catch (error) {

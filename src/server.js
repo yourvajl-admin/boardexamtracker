@@ -473,6 +473,11 @@ app.get('/api/cron/check-results', async (req, res) => {
       return res.json({ initialized: true, newResults: 0, message: 'Rebuilt the notification baseline.' });
     }
     const newResults = latest.filter((result) => !knownUrls.has(result.url));
+    if (newResults.length) {
+      // Pause ads whenever the official feed adds a result so an admin can
+      // review the page before manually enabling the placement again.
+      await redisCommand('SET', ADSENSE_ENABLED_KEY, 'false');
+    }
     const delivery = newResults.length ? await notifySubscribers(newResults) : { recipients: 0, failed: 0 };
     if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
     const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
