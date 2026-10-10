@@ -2,6 +2,7 @@ require('./env').loadLocalEnv();
 
 const express = require('express');
 const fs = require('node:fs/promises');
+const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const sharp = require('sharp');
@@ -26,6 +27,8 @@ const app = express();
 const port = Number(process.env.PORT) || 3000;
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 const INITIAL_RESULTS_LIMIT = 12;
+const SHARE_FONT_REGULAR = readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-400.woff2')).toString('base64');
+const SHARE_FONT_BOLD = readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-700.woff2')).toString('base64');
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
@@ -472,7 +475,7 @@ function svgTextLines(lines, { x, y, size, lineHeight, color, weight = 400 }) {
 }
 
 function createResultCardSvg(item) {
-  const title = wrapSvgText(item.title || 'Board Exam Result', 48, 3);
+  const title = wrapSvgText(item.title || 'Board Exam Result', 56, 3);
   const summary = wrapSvgText(item.description || `The ${item.category || 'professional licensure'} examination result is available. Open the result page to review the files linked by its announcement.`, 94, 2);
   let date = 'See result page for release date';
   if (item.date && /^\d{4}-\d{2}-\d{2}$/.test(item.date)) {
@@ -481,17 +484,18 @@ function createResultCardSvg(item) {
   const category = String(item.category || 'Board Exam Result').slice(0, 52).toUpperCase();
   const tagWidth = Math.min(610, Math.max(245, category.length * 10 + 40));
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    <style>@font-face{font-family:'DM Sans';font-style:normal;font-weight:400;src:url(data:font/woff2;base64,${SHARE_FONT_REGULAR}) format('woff2')}@font-face{font-family:'DM Sans';font-style:normal;font-weight:700;src:url(data:font/woff2;base64,${SHARE_FONT_BOLD}) format('woff2')}</style>
     <rect width="1200" height="630" fill="#101b2c"/>
     <circle cx="1080" cy="80" r="120" fill="#173452" opacity=".55"/><circle cx="1110" cy="40" r="42" fill="#1d4365" opacity=".5"/>
     <rect x="64" y="48" width="48" height="48" rx="14" fill="#1d4365"/><path d="m77 72 9 9 16-19" fill="none" stroke="#78d6b5" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-    <text x="128" y="81" fill="#ffffff" font-size="27" font-family="Arial, sans-serif" font-weight="700">BoardExamTracker</text>
-    <rect x="835" y="54" width="301" height="38" rx="19" fill="#153b38"/><circle cx="859" cy="73" r="5" fill="#77d9b8"/><text x="875" y="79" fill="#83e0c2" font-size="14" font-family="Arial, sans-serif" font-weight="700" letter-spacing="1.2">PHILIPPINE BOARD EXAM RESULT</text>
-    <text x="64" y="151" fill="#73b6ee" font-size="16" font-family="Arial, sans-serif" font-weight="700" letter-spacing="4">BOARD EXAM RESULT</text>
-    <rect x="64" y="174" width="${tagWidth}" height="39" rx="8" fill="#203e5b"/><text x="80" y="200" fill="#bfddfa" font-size="15" font-family="Arial, sans-serif" font-weight="700" letter-spacing="1">${escapeSvg(category)}</text>
-    ${svgTextLines(title, { x: 64, y: 278, size: 43, lineHeight: 51, color: '#edf3fb', weight: 700 })}
-    <text x="64" y="444" fill="#9eb0c6" font-size="19" font-family="Arial, sans-serif" font-weight="600">${escapeSvg(date)}</text>
-    ${svgTextLines(summary, { x: 64, y: 496, size: 21, lineHeight: 30, color: '#d1dce9' })}
-    <rect x="64" y="559" width="1072" height="42" rx="11" fill="#153a35"/><circle cx="85" cy="580" r="8" fill="#63cfaa"/><text x="104" y="586" fill="#c8e7dd" font-size="15" font-family="Arial, sans-serif">Independent results guide · Source: PRC.gov.ph</text><text x="958" y="586" fill="#c8e7dd" font-size="15" font-family="Arial, sans-serif">boardexamtracker.com</text>
+    <text x="128" y="81" fill="#ffffff" font-size="27" font-family="DM Sans, Arial, sans-serif" font-weight="700">BoardExamTracker</text>
+    <rect x="835" y="54" width="301" height="38" rx="19" fill="#153b38"/><circle cx="859" cy="73" r="5" fill="#77d9b8"/><text x="875" y="79" fill="#83e0c2" font-size="14" font-family="DM Sans, Arial, sans-serif" font-weight="700" letter-spacing="1.2">PHILIPPINE BOARD EXAM RESULT</text>
+    <text x="64" y="151" fill="#73b6ee" font-size="16" font-family="DM Sans, Arial, sans-serif" font-weight="700" letter-spacing="4">BOARD EXAM RESULT</text>
+    <rect x="64" y="174" width="${tagWidth}" height="39" rx="8" fill="#203e5b"/><text x="80" y="200" fill="#bfddfa" font-size="15" font-family="DM Sans, Arial, sans-serif" font-weight="700" letter-spacing="1">${escapeSvg(category)}</text>
+    ${svgTextLines(title, { x: 64, y: 278, size: 38, lineHeight: 46, color: '#edf3fb', weight: 700 })}
+    <text x="64" y="444" fill="#9eb0c6" font-size="19" font-family="DM Sans, Arial, sans-serif" font-weight="700">${escapeSvg(date)}</text>
+    ${svgTextLines(summary, { x: 64, y: 496, size: 22, lineHeight: 30, color: '#d1dce9' })}
+    <rect x="64" y="559" width="1072" height="42" rx="11" fill="#153a35"/><circle cx="85" cy="580" r="8" fill="#63cfaa"/><text x="104" y="586" fill="#c8e7dd" font-size="15" font-family="DM Sans, Arial, sans-serif">Independent results guide · Source: PRC.gov.ph</text><text x="958" y="586" fill="#c8e7dd" font-size="15" font-family="DM Sans, Arial, sans-serif">boardexamtracker.com</text>
   </svg>`;
 }
 
