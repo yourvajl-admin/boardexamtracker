@@ -472,13 +472,23 @@ fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
     emailAlertButton.disabled = true;
     emailAlertAvailability.textContent = 'Email alert availability could not be checked. Please try again later.';
   });
-fetch('/api/adsense-config', { headers: { Accept: 'application/json' } })
-  .then((response) => response.json())
-  .then((config) => {
-    adsenseConfig = config;
-    updateAdSlot();
-  })
-  .catch(() => { adsenseConfig = { enabled: false }; });
+async function refreshAdSenseConfig() {
+  try {
+    const response = await fetch('/api/adsense-config', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    if (!response.ok) throw new Error('Ad setting unavailable.');
+    adsenseConfig = await response.json();
+  } catch {
+    adsenseConfig = { enabled: false };
+  }
+  updateAdSlot();
+}
+refreshAdSenseConfig();
+window.setInterval(() => {
+  if (!document.hidden && !location.pathname.startsWith('/results/')) refreshAdSenseConfig();
+}, 30_000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !location.pathname.startsWith('/results/')) refreshAdSenseConfig();
+});
 emailAlertForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const buttonText = emailAlertButton.innerHTML;

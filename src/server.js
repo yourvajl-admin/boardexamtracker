@@ -27,10 +27,12 @@ const AUTO_REFRESH_MS = 5 * 60 * 1000;
 const INITIAL_RESULTS_LIMIT = 12;
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
+const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
 let pendingFetch = null;
 let pendingArchiveFetch = null;
 let archiveCacheLoaded = false;
 const announcementCache = new Map();
+let localAdsEnabled = null;
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
@@ -80,16 +82,42 @@ app.use('/api/admin', (_req, res, next) => {
   return next();
 });
 
-function getAdSenseConfig() {
+function adsenseConfigBase() {
   const clientId = process.env.ADSENSE_CLIENT_ID || '';
   const resultsSlot = process.env.ADSENSE_SLOT_ID_RESULTS || '';
   const validClientId = /^ca-pub-\d+$/.test(clientId);
   const validSlot = /^\d+$/.test(resultsSlot);
-  const enabled = validClientId && validSlot && process.env.ADSENSE_ENABLED === 'true' && process.env.NODE_ENV === 'production';
-  return { enabled, clientId: validClientId ? clientId : null, resultsSlot: validSlot ? resultsSlot : null };
+  return {
+    configured: validClientId && validSlot && process.env.NODE_ENV === 'production',
+    defaultEnabled: process.env.ADSENSE_ENABLED === 'true',
+    clientId: validClientId ? clientId : null,
+    resultsSlot: validSlot ? resultsSlot : null,
+  };
 }
 
-app.get('/api/adsense-config', (_req, res) => res.json(getAdSenseConfig()));
+async function getAdSenseConfig() {
+  const base = adsenseConfigBase();
+  let enabled = localAdsEnabled ?? base.defaultEnabled;
+  try {
+    if (isPersistentStorageConfigured()) {
+      const saved = await redisCommand('GET', ADSENSE_ENABLED_KEY);
+      if (saved === 'true' || saved === 'false') enabled = saved === 'true';
+    } else if (process.env.NODE_ENV === 'production') {
+      enabled = false;
+    }
+  } catch (error) {
+    console.error('Could not load AdSense display setting:', error.message);
+    enabled = false;
+  }
+  return {
+    enabled: base.configured && enabled,
+    configured: base.configured,
+    clientId: base.clientId,
+    resultsSlot: base.resultsSlot,
+  };
+}
+
+app.get('/api/adsense-config', async (_req, res) => res.json(await getAdSenseConfig()));
 
 const adminLoginAttempts = new Map();
 function allowAdminLogin(req) {
@@ -114,6 +142,35 @@ app.get('/admin', (_req, res) => {
 app.get('/api/admin/session', (_req, res) => {
   const config = adminConfig();
   res.json({ configured: config.configured, authenticated: config.configured && isAuthenticated(_req) });
+});
+app.get('/api/admin/ads', requireAdmin, async (_req, res) => {
+  const config = await getAdSenseConfig();
+  return res.json({
+    enabled: config.enabled,
+    configured: config.configured,
+    persistentStorage: isPersistentStorageConfigured(),
+    production: process.env.NODE_ENV === 'production',
+  });
+});
+app.post('/api/admin/ads', requireAdmin, async (req, res) => {
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'Choose whether ads should be on or off.' });
+  const base = adsenseConfigBase();
+  if (req.body.enabled && !base.configured) {
+    return res.status(503).json({ error: 'Ads cannot be turned on until the AdSense publisher ID and display ad slot ID are configured for production.' });
+  }
+  if (isPersistentStorageConfigured()) {
+    try {
+      await redisCommand('SET', ADSENSE_ENABLED_KEY, String(req.body.enabled));
+    } catch (error) {
+      console.error('Could not save AdSense display setting:', error.message);
+      return res.status(503).json({ error: 'Could not save the ads setting. Check the shared storage connection and try again.' });
+    }
+  } else if (process.env.NODE_ENV === 'production') {
+    return res.status(503).json({ error: 'Shared Upstash Redis storage is required to persist the ads setting in production.' });
+  } else {
+    localAdsEnabled = req.body.enabled;
+  }
+  return res.json({ enabled: req.body.enabled });
 });
 app.post('/api/admin/login', (req, res) => {
   if (!adminConfig().configured) return res.status(503).json({ error: 'Admin access is not configured on this server. Add ADMIN_USERNAME, ADMIN_PASSWORD, and a 32-character ADMIN_SESSION_SECRET.' });

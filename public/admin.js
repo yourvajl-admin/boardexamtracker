@@ -7,6 +7,8 @@ const subscriberEmpty = document.querySelector('#subscriber-empty');
 const searchInput = document.querySelector('#subscriber-search');
 const testAlertForm = document.querySelector('#test-alert-form');
 const testAlertStatus = document.querySelector('#test-alert-status');
+const adsToggleButton = document.querySelector('#ads-toggle-button');
+const adsControlStatus = document.querySelector('#ads-control-status');
 let subscribers = [];
 let viewerRefreshTimer = null;
 
@@ -127,6 +129,54 @@ async function refreshViewerCount() {
   }
 }
 
+function renderAdsControl(data) {
+  adsToggleButton.setAttribute('aria-pressed', String(data.enabled));
+  adsToggleButton.textContent = data.enabled ? 'Turn ads off' : 'Turn ads on';
+  adsToggleButton.classList.toggle('is-on', data.enabled);
+  adsToggleButton.disabled = !data.configured || (data.production && !data.persistentStorage);
+  if (!data.configured) {
+    adsControlStatus.textContent = 'Add the AdSense publisher ID and display ad slot ID in Vercel before enabling ads.';
+  } else if (data.production && !data.persistentStorage) {
+    adsControlStatus.textContent = 'Shared Upstash Redis is required to save this setting reliably in production.';
+  } else {
+    adsControlStatus.textContent = data.enabled
+      ? 'Ads are on for eligible homepage visitors. Open pages reflect changes within about 30 seconds.'
+      : 'Ads are off. Turn them on when you want the homepage ad placement displayed.';
+  }
+}
+
+async function loadAdsControl() {
+  try {
+    renderAdsControl(await request('/api/admin/ads'));
+  } catch (error) {
+    adsToggleButton.disabled = true;
+    adsControlStatus.textContent = error.message;
+  }
+}
+
+adsToggleButton.addEventListener('click', async () => {
+  const enabled = adsToggleButton.getAttribute('aria-pressed') !== 'true';
+  adsToggleButton.disabled = true;
+  adsToggleButton.textContent = 'Saving…';
+  try {
+    const data = await request('/api/admin/ads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    adsToggleButton.setAttribute('aria-pressed', String(data.enabled));
+    adsToggleButton.textContent = data.enabled ? 'Turn ads off' : 'Turn ads on';
+    adsToggleButton.classList.toggle('is-on', data.enabled);
+    adsControlStatus.textContent = data.enabled
+      ? 'Ads are on for eligible homepage visitors. Open pages reflect changes within about 30 seconds.'
+      : 'Ads are off. Open pages will hide the placement within about 30 seconds.';
+    await loadAdsControl();
+  } catch (error) {
+    adsControlStatus.textContent = error.message;
+    await loadAdsControl();
+  }
+});
+
 async function loadDashboard() {
   showView('dashboard-view');
   setDashboardStatus('Loading subscriber addresses…');
@@ -139,6 +189,7 @@ async function loadDashboard() {
     } else {
       setDashboardStatus('Only admins can see this list. A manual unsubscribe removes the address from future alerts.', 'good');
     }
+    await loadAdsControl();
     await refreshViewerCount();
     if (!viewerRefreshTimer) viewerRefreshTimer = setInterval(refreshViewerCount, 15_000);
   } catch (error) {
