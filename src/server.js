@@ -471,7 +471,7 @@ function wrapSvgText(value, maxCharacters, maxLines) {
 }
 
 function svgTextLines(lines, { x, y, size, lineHeight, color, weight = 400 }) {
-  return lines.map((line, index) => `<text x="${x}" y="${y + index * lineHeight}" fill="${color}" font-size="${size}" font-weight="${weight}">${escapeSvg(line)}</text>`).join('');
+  return lines.map((line, index) => `<text x="${x}" y="${y + index * lineHeight}" fill="${color}" font-family="DM Sans, Arial, sans-serif" font-size="${size}" font-weight="${weight}">${escapeSvg(line)}</text>`).join('');
 }
 
 function createResultCardSvg(item) {
