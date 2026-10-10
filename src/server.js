@@ -592,7 +592,7 @@ app.get('/api/announcement-links', async (req, res) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/results/:slug', async (req, res) => {
   try {
-    const html = await fs.readFile(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const html = await fs.readFile(path.join(__dirname, '..', 'public', 'result.html'), 'utf8');
     const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(req.params.slug)}`;
     const page = html
       .replace('rel="canonical" href="https://www.boardexamtracker.com/"', `rel="canonical" href="${canonical}"`)
