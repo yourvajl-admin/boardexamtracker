@@ -738,6 +738,7 @@ app.get('/results/:slug', async (req, res) => {
     const title = result?.title || fallbackTitle;
     const description = (result?.description || 'View this Philippine board exam result and the files linked by its public announcement.').slice(0, 300);
     const imageQuery = new URLSearchParams({
+      v: '2',
       title: title || fallbackTitle,
       category: result?.category || 'Board Exam Result',
       date: result?.date || '',
