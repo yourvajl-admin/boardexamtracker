@@ -685,7 +685,13 @@ app.get('/api/result-card/:slug.png', async (req, res) => {
   const slug = String(req.params.slug || '').replace(/\.png$/i, '');
   if (!/^[a-z0-9-]{1,180}$/i.test(slug)) return res.status(400).type('text/plain').send('Invalid result slug.');
   try {
-    const result = await findResultBySlug(slug);
+    const title = String(req.query.title || '').slice(0, 240);
+    const result = title ? {
+      title,
+      category: String(req.query.category || 'Board Exam Result').slice(0, 80),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : '',
+      description: String(req.query.summary || '').slice(0, 240),
+    } : await findResultBySlug(slug);
     if (!result) return res.status(404).type('text/plain').send('Result not found.');
     imageResponseModulePromise ||= import('@vercel/og');
     const { ImageResponse } = await imageResponseModulePromise;
@@ -714,7 +720,14 @@ app.get('/results/:slug', async (req, res) => {
     const fallbackTitle = slug.replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()) || 'Board Exam Result';
     const title = result?.title || fallbackTitle;
     const description = (result?.description || 'View this Philippine board exam result and the files linked by its public announcement.').slice(0, 300);
-    const imageUrl = `https://www.boardexamtracker.com/api/result-card/${encodeURIComponent(slug)}.png`;
+    const imageQuery = new URLSearchParams({
+      title: title || fallbackTitle,
+      category: result?.category || 'Board Exam Result',
+      date: result?.date || '',
+      summary: description,
+    });
+    const imageUrl = `https://www.boardexamtracker.com/api/result-card/${encodeURIComponent(slug)}.png?${imageQuery.toString()}`;
+    const safeImageUrl = escapeHtml(imageUrl);
     const safeTitle = escapeHtml(`${title} | BoardExamTracker`);
     const safeDescription = escapeHtml(description);
     const schema = result ? `<script type="application/ld+json">${JSON.stringify({
@@ -733,11 +746,11 @@ app.get('/results/:slug', async (req, res) => {
     page = replaceMetaValue(page, /(<meta property="og:title" content=")[^"]*(">)/, safeTitle);
     page = replaceMetaValue(page, /(<meta property="og:description" content=")[^"]*(">)/, safeDescription);
     page = replaceMetaValue(page, /(<meta property="og:url" content=")[^"]*(">)/, canonical);
-    page = replaceMetaValue(page, /(<meta property="og:image" content=")[^"]*(">)/, imageUrl);
+    page = replaceMetaValue(page, /(<meta property="og:image" content=")[^"]*(">)/, safeImageUrl);
     page = replaceMetaValue(page, /(<meta property="og:image:alt" content=")[^"]*(">)/, escapeHtml(`Preview image for ${title}`));
     page = replaceMetaValue(page, /(<meta name="twitter:title" content=")[^"]*(">)/, safeTitle);
     page = replaceMetaValue(page, /(<meta name="twitter:description" content=")[^"]*(">)/, safeDescription);
-    page = replaceMetaValue(page, /(<meta name="twitter:image" content=")[^"]*(">)/, imageUrl);
+    page = replaceMetaValue(page, /(<meta name="twitter:image" content=")[^"]*(">)/, safeImageUrl);
     page = page.replace('</head>', `${schema}</head>`);
     res.type('html').send(page);
   } catch {
