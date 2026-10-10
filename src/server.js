@@ -4,7 +4,7 @@ const express = require('express');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const React = require('react');
+const sharp = require('sharp');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
@@ -40,7 +40,6 @@ let recentResultIndexPromise = null;
 let fullResultIndex = null;
 let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
-let imageResponseModulePromise = null;
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
@@ -443,36 +442,57 @@ function replaceMetaValue(html, pattern, value) {
   return html.replace(pattern, (_match, prefix, suffix) => `${prefix}${value}${suffix}`);
 }
 
-function createResultCardElement(item) {
-  const h = React.createElement;
-  const truncate = (value, limit) => String(value || '').length > limit ? `${String(value).slice(0, limit - 1).trimEnd()}…` : String(value || '');
-  const title = truncate(item.title, 118);
-  const summary = truncate(item.description || `The ${item.category || 'professional licensure'} examination result is available. Open the result page to review files linked by the announcement.`, 150);
-  const date = item.date ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`)) : 'Release date on result page';
-  const styles = {
-    root: { display: 'flex', width: '100%', height: '100%', flexDirection: 'column', justifyContent: 'space-between', padding: '54px 64px', backgroundColor: '#101b2c', color: '#e8f0fa', fontFamily: 'Arial, sans-serif' },
-    brandRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-    brand: { display: 'flex', alignItems: 'center', gap: 12, fontSize: 26, fontWeight: 700, color: '#ffffff' },
-    mark: { display: 'flex', justifyContent: 'center', alignItems: 'center', width: 40, height: 40, borderRadius: 12, backgroundColor: '#1d4365', color: '#78d6b5', fontSize: 25, fontWeight: 700 },
-    tag: { display: 'flex', alignItems: 'center', padding: '10px 15px', borderRadius: 18, backgroundColor: '#153b38', color: '#83e0c2', fontSize: 16, fontWeight: 700 },
-    eyebrow: { display: 'flex', color: '#73b6ee', fontSize: 17, fontWeight: 700, letterSpacing: 4 },
-    category: { display: 'flex', alignSelf: 'flex-start', marginTop: 13, padding: '9px 13px', borderRadius: 8, backgroundColor: '#203e5b', color: '#bfddfa', fontSize: 15, fontWeight: 700, letterSpacing: 1 },
-    title: { display: 'flex', marginTop: 18, maxHeight: 150, overflow: 'hidden', fontSize: 42, lineHeight: 1.16, fontWeight: 700, color: '#edf3fb' },
-    date: { display: 'flex', marginTop: 10, fontSize: 19, fontWeight: 600, color: '#9eb0c6' },
-    summary: { display: 'flex', maxWidth: 1030, fontSize: 23, lineHeight: 1.4, color: '#d1dce9' },
-    footer: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 18px', borderRadius: 12, backgroundColor: '#153a35', color: '#c8e7dd', fontSize: 16 },
-  };
-  return h('div', { style: styles.root },
-    h('div', { style: styles.brandRow },
-      h('div', { style: styles.brand }, h('div', { style: styles.mark }, '✓'), h('span', null, 'BoardExamTracker')),
-      h('div', { style: styles.tag }, 'PHILIPPINE BOARD EXAM RESULT')),
-    h('div', null,
-      h('div', { style: styles.eyebrow }, 'BOARD EXAM RESULT'),
-      h('div', { style: styles.category }, truncate(item.category || 'PRC Examination Result', 40).toUpperCase()),
-      h('div', { style: styles.title }, title),
-      h('div', { style: styles.date }, `Released ${date}`)),
-    h('div', { style: styles.summary }, summary),
-    h('div', { style: styles.footer }, h('span', null, 'Independent results guide · Source: PRC.gov.ph'), h('span', null, 'boardexamtracker.com')));
+function escapeSvg(value = '') {
+  return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]);
+}
+
+function wrapSvgText(value, maxCharacters, maxLines) {
+  const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxCharacters && line) {
+      lines.push(line);
+      line = word;
+      if (lines.length === maxLines - 1) break;
+    } else line = next;
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  const consumed = lines.join(' ').length;
+  if (lines.length && consumed < String(value || '').trim().length) {
+    const last = lines.length - 1;
+    lines[last] = `${lines[last].replace(/[.…]*$/, '')}…`;
+  }
+  return lines;
+}
+
+function svgTextLines(lines, { x, y, size, lineHeight, color, weight = 400 }) {
+  return lines.map((line, index) => `<text x="${x}" y="${y + index * lineHeight}" fill="${color}" font-size="${size}" font-weight="${weight}">${escapeSvg(line)}</text>`).join('');
+}
+
+function createResultCardSvg(item) {
+  const title = wrapSvgText(item.title || 'Board Exam Result', 48, 3);
+  const summary = wrapSvgText(item.description || `The ${item.category || 'professional licensure'} examination result is available. Open the result page to review the files linked by its announcement.`, 94, 2);
+  let date = 'See result page for release date';
+  if (item.date && /^\d{4}-\d{2}-\d{2}$/.test(item.date)) {
+    date = `Released ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(`${item.date}T00:00:00Z`))}`;
+  }
+  const category = String(item.category || 'Board Exam Result').slice(0, 52).toUpperCase();
+  const tagWidth = Math.min(610, Math.max(245, category.length * 10 + 40));
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+    <rect width="1200" height="630" fill="#101b2c"/>
+    <circle cx="1080" cy="80" r="120" fill="#173452" opacity=".55"/><circle cx="1110" cy="40" r="42" fill="#1d4365" opacity=".5"/>
+    <rect x="64" y="48" width="48" height="48" rx="14" fill="#1d4365"/><path d="m77 72 9 9 16-19" fill="none" stroke="#78d6b5" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="128" y="81" fill="#ffffff" font-size="27" font-family="Arial, sans-serif" font-weight="700">BoardExamTracker</text>
+    <rect x="835" y="54" width="301" height="38" rx="19" fill="#153b38"/><circle cx="859" cy="73" r="5" fill="#77d9b8"/><text x="875" y="79" fill="#83e0c2" font-size="14" font-family="Arial, sans-serif" font-weight="700" letter-spacing="1.2">PHILIPPINE BOARD EXAM RESULT</text>
+    <text x="64" y="151" fill="#73b6ee" font-size="16" font-family="Arial, sans-serif" font-weight="700" letter-spacing="4">BOARD EXAM RESULT</text>
+    <rect x="64" y="174" width="${tagWidth}" height="39" rx="8" fill="#203e5b"/><text x="80" y="200" fill="#bfddfa" font-size="15" font-family="Arial, sans-serif" font-weight="700" letter-spacing="1">${escapeSvg(category)}</text>
+    ${svgTextLines(title, { x: 64, y: 278, size: 43, lineHeight: 51, color: '#edf3fb', weight: 700 })}
+    <text x="64" y="444" fill="#9eb0c6" font-size="19" font-family="Arial, sans-serif" font-weight="600">${escapeSvg(date)}</text>
+    ${svgTextLines(summary, { x: 64, y: 496, size: 21, lineHeight: 30, color: '#d1dce9' })}
+    <rect x="64" y="559" width="1072" height="42" rx="11" fill="#153a35"/><circle cx="85" cy="580" r="8" fill="#63cfaa"/><text x="104" y="586" fill="#c8e7dd" font-size="15" font-family="Arial, sans-serif">Independent results guide · Source: PRC.gov.ph</text><text x="958" y="586" fill="#c8e7dd" font-size="15" font-family="Arial, sans-serif">boardexamtracker.com</text>
+  </svg>`;
 }
 
 async function notifySubscribers(results) {
@@ -693,14 +713,7 @@ app.get('/api/result-card/:slug.png', async (req, res) => {
       description: String(req.query.summary || '').slice(0, 240),
     } : await findResultBySlug(slug);
     if (!result) return res.status(404).type('text/plain').send('Result not found.');
-    imageResponseModulePromise ||= import('@vercel/og');
-    const { ImageResponse } = await imageResponseModulePromise;
-    const image = new ImageResponse(createResultCardElement(result), {
-      width: 1200,
-      height: 630,
-      headers: { 'Cache-Control': 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800' },
-    });
-    const png = Buffer.from(await image.arrayBuffer());
+    const png = await sharp(Buffer.from(createResultCardSvg(result))).png().toBuffer();
     return res.status(200).type('png').set('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800').send(png);
   } catch (error) {
     console.error('Could not generate result share image:', error.message);
