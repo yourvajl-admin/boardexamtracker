@@ -6,6 +6,8 @@ const SOURCE_URL = 'https://www.prc.gov.ph/articles/exam-results';
 const ALLOWED_HOSTS = new Set(['prc.gov.ph', 'www.prc.gov.ph']);
 const RESULT_TERMS = /\b(result|results|licensure examination|board examination|examination result)\b/i;
 const PAGE_DELAY_MS = 500;
+const SOURCE_HOSTS = ['www.prc.gov.ph', 'prc.gov.ph'];
+const SOURCE_RETRY_DELAYS_MS = [750, 2000];
 const execFileAsync = promisify(execFile);
 const PRC_REQUEST_HEADERS = {
   'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)',
@@ -161,33 +163,47 @@ function extractAnnouncementDetails(html) {
 }
 
 async function fetchAnnouncementLinks(articleUrl) {
-  let html;
-  let fetchError;
-  try {
-    const response = await fetch(articleUrl, {
-      headers: { 'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)', Accept: 'text/html' },
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!response.ok) throw new Error(`PRC returned HTTP ${response.status}`);
-    html = await response.text();
-  } catch (error) {
-    fetchError = error;
-    try {
-      const { stdout } = await execFileAsync('curl', [
-        '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '18',
-        '--user-agent', 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
-        '--header', 'Accept: text/html,application/xhtml+xml',
-        articleUrl,
-      ], { maxBuffer: 4 * 1024 * 1024, timeout: 20000 });
-      html = stdout;
-    } catch (curlError) {
-      throw new Error(`PRC announcement could not be fetched: ${fetchError.message}; curl fallback: ${curlError.message}`);
-    }
-  }
+  const html = await fetchPrcHtml(articleUrl, { maxBytes: 4 * 1024 * 1024 });
   return {
     resources: extractAnnouncementLinks(html, articleUrl),
     details: extractAnnouncementDetails(html),
   };
+}
+
+async function fetchPrcHtml(sourceUrl, { maxBytes = 2 * 1024 * 1024 } = {}) {
+  const original = new URL(sourceUrl);
+  const urls = SOURCE_HOSTS.map((host) => {
+    const url = new URL(original.href);
+    url.hostname = host;
+    return url.href;
+  });
+  const errors = [];
+  for (let attempt = 0; attempt <= SOURCE_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, SOURCE_RETRY_DELAYS_MS[attempt - 1]));
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, {
+          headers: PRC_REQUEST_HEADERS,
+          signal: AbortSignal.timeout(12000),
+        });
+        if (!response.ok) throw new Error(`PRC returned HTTP ${response.status}`);
+        return await response.text();
+      } catch (fetchError) {
+        try {
+          const { stdout } = await execFileAsync('curl', [
+            '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '12',
+            '--user-agent', 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
+            '--header', 'Accept: text/html,application/xhtml+xml',
+            url,
+          ], { maxBuffer: maxBytes, timeout: 14000 });
+          return stdout;
+        } catch (curlError) {
+          errors.push(`${new URL(url).hostname}: ${fetchError.message}; curl: ${curlError.message}`);
+        }
+      }
+    }
+  }
+  throw new Error(`PRC page could not be fetched after retries (${errors.join(' | ')})`);
 }
 
 function extractResults(html) {
@@ -237,21 +253,9 @@ async function fetchListingPage(page = 0) {
   const url = new URL(SOURCE_URL);
   if (page > 0) url.searchParams.set('page', String(page));
   try {
-    const response = await fetch(url, { headers: PRC_REQUEST_HEADERS, signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error('PRC results page ' + page + ' returned HTTP ' + response.status);
-    return await response.text();
-  } catch (fetchError) {
-    try {
-      const { stdout } = await execFileAsync('curl', [
-        '--fail', '--silent', '--show-error', '--location', '--max-time', '20',
-        '--user-agent', PRC_REQUEST_HEADERS['User-Agent'],
-        '--header', 'Accept: text/html',
-        url.href,
-      ], { maxBuffer: 2 * 1024 * 1024, timeout: 25000 });
-      return stdout;
-    } catch (curlError) {
-      throw new Error(`PRC results page ${page} could not be fetched: ${fetchError.message}; curl fallback: ${curlError.message}`);
-    }
+    return await fetchPrcHtml(url.href);
+  } catch (error) {
+    throw new Error(`PRC results page ${page} could not be fetched: ${error.message}`);
   }
 }
 

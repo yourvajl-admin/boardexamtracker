@@ -6,7 +6,15 @@ async function main() {
 
   // Fetch from the GitHub runner, then hand the official-source data to the
   // production API. This avoids depending on Vercel outbound access to PRC.
-  const results = await fetchResults({ maxPage: 2 });
+  let results;
+  try {
+    results = await fetchResults({ maxPage: 2 });
+  } catch (error) {
+    // A PRC connection failure is not an empty feed. Do not update the result
+    // baseline or send alerts from partial data; the next scheduled run retries.
+    console.warn(`::warning::PRC was unreachable after retries. No results or email alerts were changed; the saved website cache remains in place. The next scheduled run will retry. ${error.message}`);
+    return;
+  }
   const response = await fetch('https://www.boardexamtracker.com/api/cron/check-results', {
     method: 'POST',
     headers: {
