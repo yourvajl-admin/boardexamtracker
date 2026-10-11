@@ -35,6 +35,7 @@ const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CACHE_KEY = 'boardexamtracker:results-cache:v1';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
+const ANNOUNCEMENT_CACHE_KEY_PREFIX = 'boardexamtracker:announcement-links:v1:';
 let pendingFetch = null;
 let pendingArchiveFetch = null;
 let archiveCacheLoaded = false;
@@ -46,6 +47,52 @@ let recentResultIndexPromise = null;
 let fullResultIndex = null;
 let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
+
+function announcementCacheKey(articleUrl) {
+  return `${ANNOUNCEMENT_CACHE_KEY_PREFIX}${Buffer.from(articleUrl).toString('base64url')}`;
+}
+
+async function getCachedAnnouncement(articleUrl) {
+  const memoryValue = announcementCache.get(articleUrl);
+  const memoryTtl = memoryValue?.resources?.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
+  if (memoryValue && Date.now() - memoryValue.fetchedAt < memoryTtl) return memoryValue;
+  if (!isPersistentStorageConfigured()) return null;
+  try {
+    const saved = await redisCommand('GET', announcementCacheKey(articleUrl));
+    if (typeof saved !== 'string') return null;
+    const value = JSON.parse(saved);
+    if (!Array.isArray(value.resources) || !Number.isFinite(value.fetchedAt)) return null;
+    const ttl = value.resources.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
+    if (Date.now() - value.fetchedAt >= ttl) return null;
+    announcementCache.set(articleUrl, value);
+    return value;
+  } catch (error) {
+    console.warn('Could not read cached PRC announcement links:', error.message);
+    return null;
+  }
+}
+
+async function saveAnnouncementCache(articleUrl, value) {
+  const cached = { ...value, fetchedAt: Date.now() };
+  announcementCache.set(articleUrl, cached);
+  if (!isPersistentStorageConfigured()) return;
+  try {
+    const ttl = cached.resources?.length ? 60 * 60 * 24 * 30 : 60 * 60 * 6;
+    await redisCommand('SET', announcementCacheKey(articleUrl), JSON.stringify(cached), 'EX', ttl);
+  } catch (error) {
+    console.warn('Could not persist PRC announcement links:', error.message);
+  }
+}
+
+async function missingAnnouncementUrls(results, limit = 12) {
+  const urls = [...new Set(results.map((result) => normalizeUrl(result?.url)).filter(Boolean))];
+  const missing = [];
+  for (const articleUrl of urls) {
+    if (missing.length >= limit) break;
+    if (!await getCachedAnnouncement(articleUrl)) missing.push(articleUrl);
+  }
+  return missing;
+}
 
 function restoreBundledResultCache() {
   const cached = getCache();
@@ -665,7 +712,8 @@ app.all('/api/cron/check-results', async (req, res) => {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
       const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
       await persistResultCache(cache.results, cache.fetchedAt);
-      return res.json({ initialized: true, newResults: 0, message: 'Saved current results as the notification baseline.' });
+      const announcementUrls = await missingAnnouncementUrls(latest);
+      return res.json({ initialized: true, newResults: 0, announcementUrls, message: 'Saved current results as the notification baseline.' });
     }
 
     let knownUrls;
@@ -677,7 +725,8 @@ app.all('/api/cron/check-results', async (req, res) => {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
       const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
       await persistResultCache(cache.results, cache.fetchedAt);
-      return res.json({ initialized: true, newResults: 0, message: 'Rebuilt the notification baseline.' });
+      const announcementUrls = await missingAnnouncementUrls(latest);
+      return res.json({ initialized: true, newResults: 0, announcementUrls, message: 'Rebuilt the notification baseline.' });
     }
     const newResults = latest.filter((result) => !knownUrls.has(result.url));
     if (newResults.length) {
@@ -694,7 +743,8 @@ app.all('/api/cron/check-results', async (req, res) => {
     if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
     const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
-    return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed });
+    const announcementUrls = await missingAnnouncementUrls([...newResults, ...latest]);
+    return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed, announcementUrls });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
     return res.status(502).json({ error: 'Scheduled PRC result check failed.' });
@@ -789,17 +839,48 @@ app.get('/api/announcement-links', async (req, res) => {
   if (!articleUrl || !(articlePath.startsWith('/article/') || /^\/node\/\d+$/.test(articlePath))) {
     return res.status(400).json({ error: 'A valid PRC announcement URL is required.' });
   }
-  const cached = announcementCache.get(articleUrl);
-  if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) {
+  const cached = await getCachedAnnouncement(articleUrl);
+  if (cached) {
     return res.json({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
     const announcement = await fetchAnnouncementLinks(articleUrl);
-    announcementCache.set(articleUrl, { ...announcement, fetchedAt: Date.now() });
+    await saveAnnouncementCache(articleUrl, announcement);
     return res.json({ url: articleUrl, ...announcement, cached: false });
   } catch (error) {
     return res.status(502).json({ error: 'Could not retrieve links from this PRC announcement.', message: error.message });
   }
+});
+
+app.post('/api/cron/cache-announcement-links', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
+  const announcements = Array.isArray(req.body?.announcements) ? req.body.announcements.slice(0, 20) : [];
+  let saved = 0;
+  for (const entry of announcements) {
+    const articleUrl = normalizeUrl(entry?.url);
+    const articlePath = articleUrl ? new URL(articleUrl).pathname : '';
+    if (!articleUrl || !(articlePath.startsWith('/article/') || /^\/node\/\d+$/.test(articlePath)) || !Array.isArray(entry.resources)) continue;
+    const resources = entry.resources.slice(0, 30).flatMap((resource) => {
+      if (typeof resource?.label !== 'string' || typeof resource?.url !== 'string') return [];
+      try {
+        const url = new URL(resource.url);
+        if (url.protocol !== 'https:' || !['drive.google.com', 'prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname)) return [];
+        return [{ label: resource.label.slice(0, 200), url: url.href }];
+      } catch {
+        return [];
+      }
+    });
+    await saveAnnouncementCache(articleUrl, {
+      resources,
+      details: entry.details && typeof entry.details === 'object' ? {
+        summary: typeof entry.details.summary === 'string' ? entry.details.summary.slice(0, 600) : '',
+        facts: Array.isArray(entry.details.facts) ? entry.details.facts.filter((fact) => typeof fact === 'string').slice(0, 12).map((fact) => fact.slice(0, 240)) : [],
+      } : { summary: '', facts: [] },
+    });
+    saved += 1;
+  }
+  return res.json({ saved });
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));

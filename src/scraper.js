@@ -97,7 +97,7 @@ function categorize(title) {
 
 function extractAnnouncementLinks(html, articleUrl) {
   const $ = cheerio.load(html);
-  const resourceLabel = /(official result|performance of schools|successful examinees|list of examinees|list of successful|result document|examinees list)/i;
+  const resourceLabel = /(full text of (?:the )?official result|official result|performance of (?:the )?schools|successful examinees|list of (?:the )?examinees|list of successful|top\s*10|highest places|result document|examinees list)/i;
   const resources = [];
   $('a[href]').each((_, element) => {
     const anchor = $(element);

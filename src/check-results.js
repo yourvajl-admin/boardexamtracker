@@ -1,4 +1,4 @@
-const { fetchResults } = require('./scraper');
+const { fetchResults, fetchAnnouncementLinks } = require('./scraper');
 
 async function main() {
   const secret = process.env.CRON_SECRET;
@@ -19,7 +19,33 @@ async function main() {
   });
   const message = await response.text();
   if (!response.ok) throw new Error(`BoardExamTracker returned HTTP ${response.status}: ${message}`);
-  process.stdout.write(`${message}\n`);
+  const result = JSON.parse(message);
+
+  const announcements = [];
+  for (const url of result.announcementUrls || []) {
+    try {
+      announcements.push({ url, ...(await fetchAnnouncementLinks(url)) });
+    } catch (error) {
+      console.warn(`Could not index linked documents for ${url}: ${error.message}`);
+    }
+  }
+  if (announcements.length) {
+    const cacheResponse = await fetch('https://www.boardexamtracker.com/api/cron/cache-announcement-links', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'BoardExamTracker scheduled result checker',
+      },
+      body: JSON.stringify({ announcements }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const cacheMessage = await cacheResponse.text();
+    if (!cacheResponse.ok) throw new Error(`BoardExamTracker link cache returned HTTP ${cacheResponse.status}: ${cacheMessage}`);
+    process.stdout.write(`${message}\n${cacheMessage}\n`);
+  } else {
+    process.stdout.write(`${message}\n`);
+  }
 }
 
 main().catch((error) => {
