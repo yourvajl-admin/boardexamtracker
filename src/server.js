@@ -107,7 +107,8 @@ function restoreBundledResultCache() {
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
-  const limit = req.method === 'POST' && req.path === '/api/cron/check-results' ? '256kb' : '10kb';
+  const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links'].includes(req.path);
+  const limit = isCronPayload ? '256kb' : '10kb';
   return express.json({ limit })(req, res, next);
 });
 app.get('/sitemap.xml', async (_req, res) => {
