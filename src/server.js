@@ -280,6 +280,23 @@ app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
   }
 });
+async function getLatestAvailableResult() {
+  const snapshot = await refresh();
+  const latest = snapshot?.results
+    ?.filter((result) => result?.title && result?.date && normalizeUrl(result.url))
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+  const officialUrl = latest && normalizeUrl(latest.url);
+  if (!latest || !officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) return null;
+  return latest;
+}
+
+function emailProviderFailureMessage(error) {
+  const status = /^Email provider returned (\d{3}):/.exec(error?.message || '')?.[1];
+  return status
+    ? `Email provider rejected this message (HTTP ${status}). Check Resend → Emails for the delivery details.`
+    : 'Could not reach or send through the email provider. Check Resend → Emails for details, then try again.';
+}
+
 const adminResultEmailAttempts = new Map();
 app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -295,29 +312,21 @@ app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
   recent.push(now);
   adminResultEmailAttempts.set(ip, recent);
 
+  let latest;
   try {
-    let results;
-    try {
-      results = await fetchResults({ maxPage: 2 });
-    } catch (error) {
-      const cached = getCache();
-      if (!cached?.results?.length) throw error;
-      results = cached.results;
-    }
-    const latest = results
-      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
-    if (!latest) return res.status(503).json({ error: 'No current result announcement is available to send.' });
+    latest = await getLatestAvailableResult();
+  } catch (error) {
+    console.error('Could not load a result for the admin alert:', error.message);
+    return res.status(503).json({ error: 'Could not load the latest result from PRC or the saved result snapshot. Try again later.' });
+  }
+  if (!latest) return res.status(503).json({ error: 'No current result announcement is available to send.' });
 
-    const officialUrl = normalizeUrl(latest.url);
-    if (!officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) {
-      return res.status(503).json({ error: 'The latest result does not have a valid official PRC link.' });
-    }
+  try {
     await sendResultAlert({ email }, [latest]);
     return res.json({ sent: true, title: latest.title });
   } catch (error) {
-    console.error('Could not send latest-result alert:', error.message);
-    return res.status(502).json({ error: 'Could not send the latest result alert. Check the email provider logs and try again.' });
+    console.error('Email provider failed to send latest-result alert:', error.message);
+    return res.status(502).json({ error: emailProviderFailureMessage(error) });
   }
 });
 const adminResendAttempts = new Map();
@@ -340,28 +349,20 @@ app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) =
       return res.status(429).json({ error: 'An alert was just sent to this subscriber. Wait one minute before resending.' });
     }
 
-    let results;
-    try {
-      results = await fetchResults({ maxPage: 2 });
-    } catch (error) {
-      const cached = getCache();
-      if (!cached?.results?.length) throw error;
-      results = cached.results;
-    }
-    const latest = results
-      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
-    const officialUrl = latest && normalizeUrl(latest.url);
-    if (!latest || !officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) {
-      return res.status(503).json({ error: 'No current result announcement with a valid official source is available to send.' });
-    }
+    const latest = await getLatestAvailableResult();
+    if (!latest) return res.status(503).json({ error: 'No current result announcement with a valid official source is available to send.' });
 
-    await sendResultAlert(subscriber, [latest], { resend: true });
+    try {
+      await sendResultAlert(subscriber, [latest], { resend: true });
+    } catch (error) {
+      console.error('Email provider failed to resend latest-result alert:', error.message);
+      return res.status(502).json({ error: emailProviderFailureMessage(error) });
+    }
     adminResendAttempts.set(email, Date.now());
     return res.json({ sent: true, title: latest.title });
   } catch (error) {
-    console.error('Could not resend latest-result alert:', error.message);
-    return res.status(502).json({ error: 'Could not resend the alert. Check the email provider logs and try again.' });
+    console.error('Could not prepare latest-result resend:', error.message);
+    return res.status(503).json({ error: 'Could not load the latest result from PRC or the saved result snapshot. Try again later.' });
   }
 });
 app.post('/api/admin/subscribers/unsubscribe', requireAdmin, async (req, res) => {
