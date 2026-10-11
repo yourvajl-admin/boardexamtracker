@@ -644,7 +644,6 @@ app.all('/api/cron/check-results', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized.' });
   }
   if (!isPersistentStorageConfigured()) return res.status(503).json({ error: 'Persistent result tracking is not configured.' });
-  if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
 
   try {
     const lock = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, randomUUID(), 'NX', 'EX', 240);
@@ -686,12 +685,15 @@ app.all('/api/cron/check-results', async (req, res) => {
       // review the page before manually enabling the placement again.
       await redisCommand('SET', ADSENSE_ENABLED_KEY, 'false');
     }
+    // Publish the latest official announcements before sending alerts. This
+    // makes result pages available immediately and leaves failed email alerts
+    // eligible for retry on the next scheduled check.
+    const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
+    await persistResultCache(cache.results, cache.fetchedAt);
     const delivery = newResults.length ? await notifySubscribers(newResults) : { recipients: 0, failed: 0 };
     if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
     const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
-    const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
-    await persistResultCache(cache.results, cache.fetchedAt);
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
