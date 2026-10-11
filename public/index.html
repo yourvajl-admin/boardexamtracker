@@ -28,12 +28,23 @@
   <script defer src="/_vercel/insights/script.js"></script>
   <script src="/theme.js?v=20261009-16"></script>
   <link rel="stylesheet" href="/styles.css?v=20261009-19">
-  <link rel="stylesheet" href="/theme.css?v=20261009-17">
+  <link rel="stylesheet" href="/theme.css?v=20261011-1">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"BoardExamTracker","url":"https://www.boardexamtracker.com/","description":"Latest Philippine board exam results and updates, sourced from official PRC announcements.","potentialAction":{"@type":"SearchAction","target":"https://www.boardexamtracker.com/?q={search_term_string}","query-input":"required name=search_term_string"}}</script>
   <script src="/viewers.js?v=20261009-1" defer></script>
   <script src="/app.js?v=20261010-1" defer></script>
+  <script src="/maintenance.js?v=20261011-1" defer></script>
 </head>
 <body>
+  <dialog class="maintenance-dialog" aria-labelledby="maintenance-title" aria-describedby="maintenance-message">
+    <div class="maintenance-dialog-inner">
+      <button class="maintenance-close" type="button" aria-label="Close maintenance notice">×</button>
+      <span class="maintenance-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3 3-3-3 3-3Z"/><path d="m5 5 2 2"/></svg></span>
+      <p class="maintenance-eyebrow">TEMPORARY NOTICE</p>
+      <h2 id="maintenance-title">We’re performing maintenance</h2>
+      <p id="maintenance-message">Some parts of BoardExamTracker may be temporarily unavailable while we make improvements. Please check back soon.</p>
+      <button class="maintenance-continue" type="button">Continue to website</button>
+    </div>
+  </dialog>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
     <div class="header-inner wrap">

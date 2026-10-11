@@ -24,11 +24,22 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="/theme.js" defer></script>
+  <script src="/maintenance.js?v=20261011-1" defer></script>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/theme.css?v=20261011-1">
   <script src="/result.js" defer></script>
 </head>
 <body>
+  <dialog class="maintenance-dialog" aria-labelledby="maintenance-title" aria-describedby="maintenance-message">
+    <div class="maintenance-dialog-inner">
+      <button class="maintenance-close" type="button" aria-label="Close maintenance notice">×</button>
+      <span class="maintenance-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3 3-3-3 3-3Z"/><path d="m5 5 2 2"/></svg></span>
+      <p class="maintenance-eyebrow">TEMPORARY NOTICE</p>
+      <h2 id="maintenance-title">We’re performing maintenance</h2>
+      <p id="maintenance-message">Some parts of BoardExamTracker may be temporarily unavailable while we make improvements. Please check back soon.</p>
+      <button class="maintenance-continue" type="button">Continue to website</button>
+    </div>
+  </dialog>
   <header class="site-header">
     <div class="header-inner wrap result-header">
       <a class="brand" href="/" aria-label="BoardExamTracker home"><img class="brand-wordmark" src="/logo.svg" alt="BoardExamTracker"></a>
