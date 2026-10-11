@@ -10,8 +10,14 @@ permissions: {}
 jobs:
   check-results:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Check official PRC feed and send new-result alerts
         env:
           CRON_SECRET: ${{ secrets.BOARD_EXAMTRACKER_CRON_SECRET }}
@@ -20,7 +26,4 @@ jobs:
             echo "Missing repository secret BOARD_EXAMTRACKER_CRON_SECRET" >&2
             exit 1
           fi
-          curl --fail-with-body --silent --show-error --max-time 55 \
-            --header "Authorization: Bearer $CRON_SECRET" \
-            --header "User-Agent: BoardExamTracker scheduled result checker" \
-            "https://www.boardexamtracker.com/api/cron/check-results"
+          node src/check-results.js

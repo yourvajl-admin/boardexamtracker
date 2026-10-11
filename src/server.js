@@ -47,7 +47,10 @@ let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '10kb' }));
+app.use((req, res, next) => {
+  const limit = req.method === 'POST' && req.path === '/api/cron/check-results' ? '256kb' : '10kb';
+  return express.json({ limit })(req, res, next);
+});
 app.get('/sitemap.xml', async (_req, res) => {
   try {
     await restorePersistentResultCache();
@@ -613,7 +616,7 @@ app.get('/api/notifications/status', (_req, res) => {
   });
 });
 
-app.get('/api/cron/check-results', async (req, res) => {
+app.all('/api/cron/check-results', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) {
     return res.status(401).json({ error: 'Unauthorized.' });
@@ -625,7 +628,10 @@ app.get('/api/cron/check-results', async (req, res) => {
     const lock = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, randomUUID(), 'NX', 'EX', 240);
     if (lock !== 'OK') return res.json({ skipped: true, reason: 'A result check is already running.' });
 
-    const latest = (await fetchResults({ maxPage: 2 }))
+    const sourceResults = Array.isArray(req.body?.results)
+      ? req.body.results
+      : await fetchResults({ maxPage: 2 });
+    const latest = sourceResults
       .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
       .sort((a, b) => b.date.localeCompare(a.date));
     if (!latest.length) return res.status(502).json({ error: 'No results could be read from the official PRC page.' });
