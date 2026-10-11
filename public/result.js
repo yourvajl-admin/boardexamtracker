@@ -64,17 +64,21 @@ async function loadResult() {
     setMeta(item, description, canonical);
     resultContent.innerHTML = `<div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p id="result-summary" class="detail-summary">${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p><div class="detail-source-note"><span aria-hidden="true">✓</span><p>BoardExamTracker is an independent information platform. The attached files are served by the original source. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="result-facts" class="result-facts"></div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading files linked by the announcement…</p></div></section>`;
 
-    const linksResponse = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`, { headers: { Accept: 'application/json' } });
-    const linksData = await linksResponse.json();
     const resources = document.querySelector('#detail-resources');
-    if (!linksResponse.ok) throw new Error(linksData.error || 'Could not load the files linked by this announcement.');
-    if (linksData.details?.summary) document.querySelector('#result-summary').textContent = linksData.details.summary;
-    document.querySelector('#result-facts').innerHTML = linksData.details?.facts?.length
-      ? `<ul>${linksData.details.facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join('')}</ul>`
-      : '';
-    resources.innerHTML = linksData.resources?.length
-      ? linksData.resources.map(renderResource).join('')
-      : '<p class="dialog-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';
+    try {
+      const linksResponse = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`, { headers: { Accept: 'application/json' } });
+      const linksData = await linksResponse.json();
+      if (!linksResponse.ok) throw new Error(linksData.error || 'Could not load the files linked by this announcement.');
+      if (linksData.details?.summary) document.querySelector('#result-summary').textContent = linksData.details.summary;
+      document.querySelector('#result-facts').innerHTML = linksData.details?.facts?.length
+        ? `<ul>${linksData.details.facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join('')}</ul>`
+        : '';
+      resources.innerHTML = linksData.resources?.length
+        ? linksData.resources.map(renderResource).join('')
+        : '<p class="dialog-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';
+    } catch {
+      resources.innerHTML = `<p class="dialog-empty">The result details are shown above. PRC’s attached files are temporarily unavailable here. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>.</p>`;
+    }
   } catch (error) {
     resultContent.innerHTML = `<h1>Result unavailable</h1><p class="detail-summary">${escapeHtml(error.message || 'This result could not be loaded right now.')}</p><a class="result-home-link" href="/">Back to latest results</a>`;
   }
