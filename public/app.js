@@ -7,7 +7,7 @@ const SEARCH_ALIASES = {
   let: ['teacher', 'professional teachers'],
   cpa: ['certified public accountant', 'accountancy'],
 };
-const state = { results: [], professions: [], query: '', filter: 'all', profession: 'all', limit: PAGE_SIZE, archiveLoaded: false };
+const state = { results: [], professions: [], query: '', filter: 'all', profession: 'all', year: 'all', limit: PAGE_SIZE, archiveLoaded: false };
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 let resultsRequestActive = false;
 let archiveRequest = null;
@@ -29,6 +29,7 @@ const emailAlertStatus = document.querySelector('#email-alert-status');
 const emailAlertStatusMessage = document.querySelector('#email-alert-status-message');
 const emailAlertAvailability = document.querySelector('#email-alert-availability');
 const emailAlertButton = emailAlertForm.querySelector('button[type="submit"]');
+const yearFilter = document.querySelector('#year-filter');
 let emailAlertsEnabled = false;
 let adsenseConfig = null;
 let adsenseScriptElement = document.querySelector('script[src^="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]');
@@ -55,6 +56,7 @@ function isRecent(date, days) {
 function filteredResults() {
   return state.results.filter((item) => {
     if (state.profession !== 'all' && item.category !== state.profession) return false;
+    if (state.year !== 'all' && !item.date.startsWith(`${state.year}-`)) return false;
     if (state.filter === 'week' && !isRecent(item.date, 7)) return false;
     if (state.filter === 'month' && !isRecent(item.date, 31)) return false;
     if (state.filter === 'latest' && !isRecent(item.date, 7)) return false;
@@ -67,6 +69,7 @@ function filteredResults() {
   });
 }
 function render() {
+  renderYearFilter();
   const filtered = filteredResults();
   const visible = filtered.slice(0, state.limit);
   count.textContent = `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`;
@@ -78,6 +81,18 @@ function render() {
     : state.query && filtered.length === 0 ? 'Search all results' : 'Browse older results';
   grid.innerHTML = visible.map((item, index) => `<a class="result-card-link" href="/results/${encodeURIComponent(resultSlug(item))}" aria-label="Open details for ${escapeHtml(item.title)}"><article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div><span class="result-card-detail-link">View result details <span aria-hidden="true">→</span></span></article></a>`).join('');
   updateAdSlot();
+}
+function renderYearFilter() {
+  if (!state.archiveLoaded) {
+    yearFilter.disabled = true;
+    yearFilter.innerHTML = '<option value="all">All years</option>';
+    return;
+  }
+  const years = [...new Set(state.results.map((item) => item.date.slice(0, 4)))].sort((a, b) => b.localeCompare(a));
+  if (state.year !== 'all' && !years.includes(state.year)) state.year = 'all';
+  yearFilter.disabled = false;
+  yearFilter.innerHTML = `<option value="all">All years</option>${years.map((year) => `<option value="${year}">${year} (${state.results.filter((item) => item.date.startsWith(`${year}-`)).length})</option>`).join('')}`;
+  yearFilter.value = state.year;
 }
 function updateAdSlot() {
   const showAd = Boolean(adsenseConfig?.enabled)
@@ -284,6 +299,7 @@ document.querySelector('#filters').addEventListener('click', async (event) => {
   }
 });
 document.querySelector('#profession-filter').addEventListener('change', (event) => { state.profession = event.target.value; state.limit = PAGE_SIZE; render(); });
+yearFilter.addEventListener('change', (event) => { state.year = event.target.value; state.limit = PAGE_SIZE; state.filter = 'all'; document.querySelectorAll('.filter').forEach((button) => button.classList.toggle('active', button.dataset.filter === 'all')); render(); });
 document.querySelector('#refresh-button').addEventListener('click', () => loadResults(true));
 const disclaimerDialog = document.querySelector('#disclaimer-dialog');
 document.querySelector('#open-disclaimer').addEventListener('click', () => disclaimerDialog.showModal());
@@ -307,7 +323,7 @@ loadMore.addEventListener('click', async () => {
   }
   render();
 });
-document.querySelector('#clear-search').addEventListener('click', () => { state.query = ''; state.filter = 'all'; state.profession = 'all'; state.limit = PAGE_SIZE; document.querySelector('#search-input').value = ''; document.querySelector('#profession-filter').value = 'all'; document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item.dataset.filter === 'all')); render(); });
+document.querySelector('#clear-search').addEventListener('click', () => { state.query = ''; state.filter = 'all'; state.profession = 'all'; state.year = 'all'; state.limit = PAGE_SIZE; document.querySelector('#search-input').value = ''; document.querySelector('#profession-filter').value = 'all'; yearFilter.value = 'all'; document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item.dataset.filter === 'all')); render(); });
 document.querySelectorAll('[data-search]').forEach((link) => link.addEventListener('click', () => { const term = link.dataset.search; document.querySelector('#search-input').value = term; state.query = term; state.limit = PAGE_SIZE; render(); }));
 professionTrack.addEventListener('click', (event) => {
   const link = event.target.closest('[data-profession-search]');
