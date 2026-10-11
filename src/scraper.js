@@ -161,12 +161,29 @@ function extractAnnouncementDetails(html) {
 }
 
 async function fetchAnnouncementLinks(articleUrl) {
-  const response = await fetch(articleUrl, {
-    headers: { 'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)', Accept: 'text/html' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`PRC returned HTTP ${response.status}`);
-  const html = await response.text();
+  let html;
+  let fetchError;
+  try {
+    const response = await fetch(articleUrl, {
+      headers: { 'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)', Accept: 'text/html' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!response.ok) throw new Error(`PRC returned HTTP ${response.status}`);
+    html = await response.text();
+  } catch (error) {
+    fetchError = error;
+    try {
+      const { stdout } = await execFileAsync('curl', [
+        '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '18',
+        '--user-agent', 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
+        '--header', 'Accept: text/html,application/xhtml+xml',
+        articleUrl,
+      ], { maxBuffer: 4 * 1024 * 1024, timeout: 20000 });
+      html = stdout;
+    } catch (curlError) {
+      throw new Error(`PRC announcement could not be fetched: ${fetchError.message}; curl fallback: ${curlError.message}`);
+    }
+  }
   return {
     resources: extractAnnouncementLinks(html, articleUrl),
     details: extractAnnouncementDetails(html),
