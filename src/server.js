@@ -31,6 +31,7 @@ const INITIAL_RESULTS_LIMIT = 12;
 const SHARE_FONT_REGULAR = fontkit.create(readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-400.woff2')));
 const SHARE_FONT_BOLD = fontkit.create(readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-700.woff2')));
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
+const RESULTS_CACHE_KEY = 'boardexamtracker:results-cache:v1';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
 let pendingFetch = null;
@@ -49,6 +50,7 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
 app.get('/sitemap.xml', async (_req, res) => {
   try {
+    await restorePersistentResultCache();
     const cached = isFresh() ? getCache() : null;
     const latest = cached?.results?.length ? cached : { results: await fetchResults({ maxPage: 0 }) };
     const urls = [
@@ -356,23 +358,70 @@ function mergeResultLists(...lists) {
   return [...merged.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
+async function restorePersistentResultCache() {
+  if (getCache() || !isPersistentStorageConfigured()) return getCache();
+  try {
+    const saved = await redisCommand('GET', RESULTS_CACHE_KEY);
+    if (typeof saved !== 'string') return null;
+    const snapshot = JSON.parse(saved);
+    if (!Array.isArray(snapshot.results) || !snapshot.results.length) return null;
+    const results = snapshot.results.filter((result) => result?.title && result?.date && normalizeUrl(result.url));
+    if (!results.length) return null;
+    const fetchedAt = Number.isFinite(snapshot.fetchedAt) ? snapshot.fetchedAt : Date.now();
+    const restored = setCache(results, fetchedAt);
+    if (snapshot.archiveLoaded === true) archiveCacheLoaded = true;
+    return restored;
+  } catch (error) {
+    console.warn('Could not restore shared result cache:', error.message);
+    return null;
+  }
+}
+
+async function persistResultCache(results, fetchedAt = Date.now(), archiveLoaded = archiveCacheLoaded) {
+  if (!isPersistentStorageConfigured() || !results?.length) return;
+  try {
+    // Keep a useful archive snapshot in shared storage so cold Vercel functions
+    // can still serve results while PRC is temporarily unavailable.
+    const snapshot = JSON.stringify({ results: results.slice(0, 500), fetchedAt, archiveLoaded });
+    await redisCommand('SET', RESULTS_CACHE_KEY, snapshot, 'EX', 60 * 60 * 24 * 30);
+  } catch (error) {
+    console.warn('Could not save shared result cache:', error.message);
+  }
+}
+
 async function refresh() {
   if (!pendingFetch) {
-    pendingFetch = fetchResults({ maxPage: 2 })
-      .then((latest) => setCache(mergeResultLists(getCache()?.results || [], latest)))
+    pendingFetch = restorePersistentResultCache()
+      .then(() => fetchResults({ maxPage: 2 }))
+      .then(async (latest) => {
+        const value = setCache(mergeResultLists(getCache()?.results || [], latest));
+        await persistResultCache(value.results, value.fetchedAt);
+        return value;
+      })
+      .catch(async (error) => {
+        await restorePersistentResultCache();
+        if (getCache()) {
+          console.warn('PRC refresh failed; serving the shared cached results:', error.message);
+          return getCache();
+        }
+        throw error;
+      })
       .finally(() => { pendingFetch = null; });
   }
   return pendingFetch;
 }
 
 async function loadArchiveResults() {
+  await restorePersistentResultCache();
   const cached = getCache();
   if (archiveCacheLoaded && cached && !cached.stale) return cached;
   if (!pendingArchiveFetch) {
     pendingArchiveFetch = fetchResults()
-      .then((archive) => {
+      .then(async (archive) => {
         archiveCacheLoaded = true;
-        return setCache(mergeResultLists(getCache()?.results || [], archive));
+        const value = setCache(mergeResultLists(getCache()?.results || [], archive));
+        await persistResultCache(value.results, value.fetchedAt, true);
+        return value;
       })
       .finally(() => { pendingArchiveFetch = null; });
   }
@@ -403,6 +452,7 @@ function resultSlug(result) {
 }
 
 async function findResultBySlug(slug) {
+  await restorePersistentResultCache();
   const cachedResults = getCache()?.results || [];
   const cachedMatch = cachedResults.find((result) => resultSlug(result) === slug);
   if (cachedMatch) return cachedMatch;
@@ -583,7 +633,8 @@ app.get('/api/cron/check-results', async (req, res) => {
     const saved = await redisCommand('GET', KNOWN_RESULTS_KEY);
     if (typeof saved !== 'string') {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
-      setCache(mergeResultLists(getCache()?.results || [], latest));
+      const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
+      await persistResultCache(cache.results, cache.fetchedAt);
       return res.json({ initialized: true, newResults: 0, message: 'Saved current results as the notification baseline.' });
     }
 
@@ -594,7 +645,8 @@ app.get('/api/cron/check-results', async (req, res) => {
       knownUrls = new Set(decoded);
     } catch {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
-      setCache(mergeResultLists(getCache()?.results || [], latest));
+      const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
+      await persistResultCache(cache.results, cache.fetchedAt);
       return res.json({ initialized: true, newResults: 0, message: 'Rebuilt the notification baseline.' });
     }
     const newResults = latest.filter((result) => !knownUrls.has(result.url));
@@ -607,7 +659,8 @@ app.get('/api/cron/check-results', async (req, res) => {
     if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
     const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
-    setCache(mergeResultLists(getCache()?.results || [], latest));
+    const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
+    await persistResultCache(cache.results, cache.fetchedAt);
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
@@ -687,7 +740,8 @@ app.get('/api/results', async (req, res) => {
   }
   try {
     const value = await refresh();
-    return res.json({ results: value.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: false, archiveLoaded: false, stale: false, source: SOURCE_URL });
+    const stale = Date.now() - value.fetchedAt >= AUTO_REFRESH_MS;
+    return res.json({ results: value.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: stale, archiveLoaded: false, stale, source: SOURCE_URL, ...(stale ? { warning: 'Showing the latest saved results while the official results feed is unavailable.' } : {}) });
   } catch (error) {
     const cached = getCache();
     if (cached) return res.status(200).json({ results: cached.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale: true, source: SOURCE_URL, warning: 'Showing the latest cached results.' });

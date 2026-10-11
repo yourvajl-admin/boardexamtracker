@@ -7,8 +7,8 @@ function getCache() {
   return { ...cache, stale: Date.now() - cache.fetchedAt >= CACHE_TTL_MS };
 }
 
-function setCache(results) {
-  cache = { results, fetchedAt: Date.now() };
+function setCache(results, fetchedAt = Date.now()) {
+  cache = { results, fetchedAt };
   return cache;
 }
 
