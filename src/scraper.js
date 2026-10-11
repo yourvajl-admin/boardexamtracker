@@ -1,9 +1,16 @@
 const cheerio = require('cheerio');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 
 const SOURCE_URL = 'https://www.prc.gov.ph/articles/exam-results';
 const ALLOWED_HOSTS = new Set(['prc.gov.ph', 'www.prc.gov.ph']);
 const RESULT_TERMS = /\b(result|results|licensure examination|board examination|examination result)\b/i;
 const PAGE_DELAY_MS = 500;
+const execFileAsync = promisify(execFile);
+const PRC_REQUEST_HEADERS = {
+  'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)',
+  Accept: 'text/html',
+};
 const PROFESSION_CATEGORIES = [
   'Accountancy', 'Aeronautical Engineering', 'Agricultural and Biosystems Engineering', 'Agriculture', 'Architecture',
   'Chemical Engineering', 'Chemistry', 'Civil Engineering', 'Criminology', 'Customs Brokers', 'Dentistry',
@@ -212,12 +219,23 @@ function getLastPage(html) {
 async function fetchListingPage(page = 0) {
   const url = new URL(SOURCE_URL);
   if (page > 0) url.searchParams.set('page', String(page));
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)', Accept: 'text/html' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error('PRC results page ' + page + ' returned HTTP ' + response.status);
-  return response.text();
+  try {
+    const response = await fetch(url, { headers: PRC_REQUEST_HEADERS, signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error('PRC results page ' + page + ' returned HTTP ' + response.status);
+    return await response.text();
+  } catch (fetchError) {
+    try {
+      const { stdout } = await execFileAsync('curl', [
+        '--fail', '--silent', '--show-error', '--location', '--max-time', '20',
+        '--user-agent', PRC_REQUEST_HEADERS['User-Agent'],
+        '--header', 'Accept: text/html',
+        url.href,
+      ], { maxBuffer: 2 * 1024 * 1024, timeout: 25000 });
+      return stdout;
+    } catch (curlError) {
+      throw new Error(`PRC results page ${page} could not be fetched: ${fetchError.message}; curl fallback: ${curlError.message}`);
+    }
+  }
 }
 
 async function fetchResults({ maxPage } = {}) {
