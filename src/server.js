@@ -48,11 +48,13 @@ let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
 
 function restoreBundledResultCache() {
-  if (getCache()?.results?.length) return getCache();
+  const cached = getCache();
   const results = Array.isArray(bundledResultSnapshot.results) ? bundledResultSnapshot.results : [];
-  if (!results.length) return null;
-  const fetchedAt = Date.parse(bundledResultSnapshot.fetchedAt) || Date.now();
-  return setCache(results, fetchedAt);
+  if (!results.length) return cached;
+  archiveCacheLoaded = true;
+  const bundledFetchedAt = Date.parse(bundledResultSnapshot.fetchedAt) || Date.now();
+  const fetchedAt = Math.max(cached?.fetchedAt || 0, bundledFetchedAt);
+  return setCache(mergeResultLists(cached?.results || [], results), fetchedAt);
 }
 
 app.disable('x-powered-by');
@@ -64,8 +66,10 @@ app.use((req, res, next) => {
 app.get('/sitemap.xml', async (_req, res) => {
   try {
     await restorePersistentResultCache();
-    const cached = isFresh() ? getCache() : null;
-    const latest = cached?.results?.length ? cached : { results: await fetchResults({ maxPage: 0 }) };
+    restoreBundledResultCache();
+    const cached = getCache();
+    let latest = cached?.results?.length ? cached : null;
+    if (!latest) latest = { results: await fetchResults({ maxPage: 0 }) };
     const urls = [
       '<url><loc>https://www.boardexamtracker.com/</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>',
       '<url><loc>https://www.boardexamtracker.com/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>',
@@ -405,18 +409,19 @@ async function persistResultCache(results, fetchedAt = Date.now(), archiveLoaded
 async function refresh() {
   if (!pendingFetch) {
     pendingFetch = restorePersistentResultCache()
-      .then(() => fetchResults({ maxPage: 2 }))
+      .then(() => {
+        restoreBundledResultCache();
+        return fetchResults({ maxPage: 2 });
+      })
       .then(async (latest) => {
         const value = setCache(mergeResultLists(getCache()?.results || [], latest));
-        await persistResultCache(value.results, value.fetchedAt);
+        await persistResultCache(value.results, value.fetchedAt, archiveCacheLoaded);
         return value;
       })
       .catch(async (error) => {
         await restorePersistentResultCache();
-        if (!getCache()) {
-          const fallback = restoreBundledResultCache();
-          if (fallback) await persistResultCache(fallback.results, fallback.fetchedAt, false);
-        }
+        const fallback = restoreBundledResultCache();
+        if (fallback) await persistResultCache(fallback.results, fallback.fetchedAt, archiveCacheLoaded);
         if (getCache()) {
           console.warn('PRC refresh failed; serving the last saved results:', error.message);
           return getCache();
@@ -430,8 +435,10 @@ async function refresh() {
 
 async function loadArchiveResults() {
   await restorePersistentResultCache();
+  const bundled = restoreBundledResultCache();
+  if (bundled) await persistResultCache(bundled.results, bundled.fetchedAt, true);
   const cached = getCache();
-  if (archiveCacheLoaded && cached && !cached.stale) return cached;
+  if (archiveCacheLoaded && cached) return cached;
   if (!pendingArchiveFetch) {
     pendingArchiveFetch = fetchResults()
       .then(async (archive) => {
@@ -470,7 +477,7 @@ function resultSlug(result) {
 
 async function findResultBySlug(slug) {
   await restorePersistentResultCache();
-  if (!getCache()) restoreBundledResultCache();
+  restoreBundledResultCache();
   const cachedResults = getCache()?.results || [];
   const cachedMatch = cachedResults.find((result) => resultSlug(result) === slug);
   if (cachedMatch) return cachedMatch;
@@ -642,6 +649,8 @@ app.all('/api/cron/check-results', async (req, res) => {
   try {
     const lock = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, randomUUID(), 'NX', 'EX', 240);
     if (lock !== 'OK') return res.json({ skipped: true, reason: 'A result check is already running.' });
+    await restorePersistentResultCache();
+    restoreBundledResultCache();
 
     const sourceResults = Array.isArray(req.body?.results)
       ? req.body.results
@@ -650,6 +659,7 @@ app.all('/api/cron/check-results', async (req, res) => {
       .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
       .sort((a, b) => b.date.localeCompare(a.date));
     if (!latest.length) return res.status(502).json({ error: 'No results could be read from the official PRC page.' });
+    if (req.body?.archiveLoaded === true) archiveCacheLoaded = true;
 
     const saved = await redisCommand('GET', KNOWN_RESULTS_KEY);
     if (typeof saved !== 'string') {
@@ -747,7 +757,8 @@ app.get('/api/results', async (req, res) => {
   if (req.query.archive === 'true') {
     try {
       const value = await loadArchiveResults();
-      return res.json({ results: value.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: archiveCacheLoaded, archiveLoaded: true, stale: false, source: SOURCE_URL });
+      const stale = Date.now() - value.fetchedAt >= AUTO_REFRESH_MS;
+      return res.json({ results: value.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(value.fetchedAt).toISOString(), cached: archiveCacheLoaded, archiveLoaded: true, stale, source: SOURCE_URL, ...(stale ? { warning: 'Showing the saved PRC results archive while the live feed is unavailable.' } : {}) });
     } catch (error) {
       const cached = getCache();
       if (cached) return res.status(200).json({ results: cached.results, professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale: true, source: SOURCE_URL, warning: 'Showing the latest cached results. Older results could not be loaded.' });

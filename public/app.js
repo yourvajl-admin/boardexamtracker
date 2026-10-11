@@ -267,7 +267,22 @@ async function loadArchiveResults() {
 
 document.querySelector('#search-input').addEventListener('input', (event) => { state.query = event.target.value.trim(); state.limit = PAGE_SIZE; render(); });
 document.querySelector('#search').addEventListener('submit', (event) => { event.preventDefault(); document.querySelector('#latest').scrollIntoView({ behavior: 'smooth' }); });
-document.querySelector('#filters').addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button)); state.filter = button.dataset.filter; state.limit = PAGE_SIZE; render(); });
+document.querySelector('#filters').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-filter]');
+  if (!button) return;
+  document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button));
+  state.filter = button.dataset.filter;
+  state.limit = PAGE_SIZE;
+  render();
+  if (state.filter === 'all' && !state.archiveLoaded) {
+    try {
+      await loadArchiveResults();
+      setNotice('The complete available PRC results archive is loaded.');
+    } catch (error) {
+      setNotice(error.message, 'error');
+    }
+  }
+});
 document.querySelector('#profession-filter').addEventListener('change', (event) => { state.profession = event.target.value; state.limit = PAGE_SIZE; render(); });
 document.querySelector('#refresh-button').addEventListener('click', () => loadResults(true));
 const disclaimerDialog = document.querySelector('#disclaimer-dialog');
