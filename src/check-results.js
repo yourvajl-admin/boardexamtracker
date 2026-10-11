@@ -12,7 +12,7 @@ async function main() {
   } catch (error) {
     // A PRC connection failure is not an empty feed. Do not update the result
     // baseline or send alerts from partial data; the next scheduled run retries.
-    console.warn(`::warning::PRC was unreachable after retries. No results or email alerts were changed; the saved website cache remains in place. The next scheduled run will retry. ${error.message}`);
+    console.log(`::warning::PRC was unreachable after retries. No results or email alerts were changed; the saved website cache remains in place. The next scheduled run will retry. ${error.message}`);
     return;
   }
   const response = await fetch('https://www.boardexamtracker.com/api/cron/check-results', {

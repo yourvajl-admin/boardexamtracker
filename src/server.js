@@ -9,6 +9,7 @@ const fontkit = require('fontkit');
 const sharp = require('sharp');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const bundledResultSnapshot = require('./fallback-results.json');
+const bundledAnnouncementLinks = require('./fallback-announcement-links.json');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
 const { adminConfig, authenticate, clearSessionCookie, createSession, isAuthenticated, setSessionCookie } = require('./admin-auth');
@@ -53,22 +54,27 @@ function announcementCacheKey(articleUrl) {
 }
 
 async function getCachedAnnouncement(articleUrl) {
+  const bundled = bundledAnnouncementLinks[articleUrl];
+  const bundledValue = bundled ? { ...bundled, fetchedAt: 0, bundled: true } : null;
   const memoryValue = announcementCache.get(articleUrl);
   const memoryTtl = memoryValue?.resources?.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
-  if (memoryValue && Date.now() - memoryValue.fetchedAt < memoryTtl) return memoryValue;
-  if (!isPersistentStorageConfigured()) return null;
+  if (memoryValue && Date.now() - memoryValue.fetchedAt < memoryTtl) {
+    return memoryValue.resources?.length ? memoryValue : bundledValue || memoryValue;
+  }
+  if (!isPersistentStorageConfigured()) return bundledValue;
   try {
     const saved = await redisCommand('GET', announcementCacheKey(articleUrl));
-    if (typeof saved !== 'string') return null;
+    if (typeof saved !== 'string') return bundledValue;
     const value = JSON.parse(saved);
-    if (!Array.isArray(value.resources) || !Number.isFinite(value.fetchedAt)) return null;
+    if (!Array.isArray(value.resources) || !Number.isFinite(value.fetchedAt)) return bundledValue;
     const ttl = value.resources.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
-    if (Date.now() - value.fetchedAt >= ttl) return null;
+    if (Date.now() - value.fetchedAt >= ttl) return bundledValue;
+    if (!value.resources.length && bundledValue) return bundledValue;
     announcementCache.set(articleUrl, value);
     return value;
   } catch (error) {
     console.warn('Could not read cached PRC announcement links:', error.message);
-    return null;
+    return bundledValue;
   }
 }
 
