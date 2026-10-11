@@ -8,6 +8,7 @@ const { randomUUID } = require('node:crypto');
 const fontkit = require('fontkit');
 const sharp = require('sharp');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
+const bundledResultSnapshot = require('./fallback-results.json');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
 const { adminConfig, authenticate, clearSessionCookie, createSession, isAuthenticated, setSessionCookie } = require('./admin-auth');
@@ -45,6 +46,15 @@ let recentResultIndexPromise = null;
 let fullResultIndex = null;
 let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
+
+function restoreBundledResultCache() {
+  if (getCache()?.results?.length) return getCache();
+  const results = Array.isArray(bundledResultSnapshot.results) ? bundledResultSnapshot.results : [];
+  if (!results.length) return null;
+  const fetchedAt = Date.parse(bundledResultSnapshot.fetchedAt) || Date.now();
+  return setCache(results, fetchedAt);
+}
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
@@ -403,8 +413,12 @@ async function refresh() {
       })
       .catch(async (error) => {
         await restorePersistentResultCache();
+        if (!getCache()) {
+          const fallback = restoreBundledResultCache();
+          if (fallback) await persistResultCache(fallback.results, fallback.fetchedAt, false);
+        }
         if (getCache()) {
-          console.warn('PRC refresh failed; serving the shared cached results:', error.message);
+          console.warn('PRC refresh failed; serving the last saved results:', error.message);
           return getCache();
         }
         throw error;
@@ -456,6 +470,7 @@ function resultSlug(result) {
 
 async function findResultBySlug(slug) {
   await restorePersistentResultCache();
+  if (!getCache()) restoreBundledResultCache();
   const cachedResults = getCache()?.results || [];
   const cachedMatch = cachedResults.find((result) => resultSlug(result) === slug);
   if (cachedMatch) return cachedMatch;
