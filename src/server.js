@@ -280,8 +280,8 @@ app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
   }
 });
-const adminTestEmailAttempts = new Map();
-app.post('/api/admin/test-latest-result', requireAdmin, async (req, res) => {
+const adminResultEmailAttempts = new Map();
+app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
     return res.status(400).json({ error: 'Enter a valid email address.' });
@@ -290,10 +290,10 @@ app.post('/api/admin/test-latest-result', requireAdmin, async (req, res) => {
 
   const now = Date.now();
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  const recent = (adminTestEmailAttempts.get(ip) || []).filter((timestamp) => now - timestamp < 60 * 60 * 1000);
-  if (recent.length >= 3) return res.status(429).json({ error: 'Test email limit reached. Try again later.' });
+  const recent = (adminResultEmailAttempts.get(ip) || []).filter((timestamp) => now - timestamp < 60 * 60 * 1000);
+  if (recent.length >= 3) return res.status(429).json({ error: 'Send limit reached. Try again later.' });
   recent.push(now);
-  adminTestEmailAttempts.set(ip, recent);
+  adminResultEmailAttempts.set(ip, recent);
 
   try {
     let results;
@@ -313,20 +313,11 @@ app.post('/api/admin/test-latest-result', requireAdmin, async (req, res) => {
     if (!officialUrl || !['www.prc.gov.ph', 'prc.gov.ph'].includes(new URL(officialUrl).hostname)) {
       return res.status(503).json({ error: 'The latest result does not have a valid official PRC link.' });
     }
-    const resultUrl = boardResultPageUrl(publicBaseUrl(), latest);
-    const title = escapeEmailHtml(latest.title);
-    const date = escapeEmailHtml(latest.date);
-    const description = escapeEmailHtml(latest.description || 'A new examination result announcement is available from the official source.');
-    await sendEmail({
-      to: email,
-      subject: `Test alert: ${String(latest.title).replace(/[\r\n]+/g, ' ').slice(0, 180)}`,
-      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><p style="color:#2563a9;font-weight:bold">BoardExamTracker · Test email</p><h1 style="font-size:22px">${title}</h1><p><strong>Release date:</strong> ${date}</p><p>${description}</p><p><a href="${escapeEmailHtml(resultUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">View result on BoardExamTracker</a></p><p style="font-size:12px;color:#718097">The official PRC source is available from the result page. This is a one-time test sent only to the address you entered. BoardExamTracker is independent and is not affiliated with PRC.</p></div>`,
-      text: `BoardExamTracker test email\n\n${latest.title}\nRelease date: ${latest.date}\n\n${latest.description || 'A new examination result announcement is available from the official source.'}\n\nView this result on BoardExamTracker: ${resultUrl}\n\nThe official PRC source is available from the result page. This test was sent only to the address you entered.`,
-    });
+    await sendResultAlert({ email }, [latest]);
     return res.json({ sent: true, title: latest.title });
   } catch (error) {
-    console.error('Could not send latest-result test email:', error.message);
-    return res.status(502).json({ error: 'Could not send the test email. Check the email provider logs and try again.' });
+    console.error('Could not send latest-result alert:', error.message);
+    return res.status(502).json({ error: 'Could not send the latest result alert. Check the email provider logs and try again.' });
   }
 });
 const adminResendAttempts = new Map();
@@ -651,7 +642,9 @@ async function sendResultAlert(subscriber, results, { resend = false } = {}) {
   const baseUrl = publicBaseUrl();
   const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(boardResultPageUrl(baseUrl, result))}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
   const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${boardResultPageUrl(baseUrl, result)}`).join('\n');
-  const unsubscribeUrl = `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(subscriber.unsubscribeToken)}`;
+  const unsubscribeUrl = subscriber.unsubscribeToken
+    ? `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(subscriber.unsubscribeToken)}`
+    : null;
   const heading = resend ? 'Your requested board exam result reminder' : `New board exam ${results.length === 1 ? 'result' : 'results'} are available`;
   const intro = resend
     ? 'An administrator resent the latest result alert to you. You can review it on BoardExamTracker.'
@@ -659,8 +652,8 @@ async function sendResultAlert(subscriber, results, { resend = false } = {}) {
   await sendEmail({
     to: subscriber.email,
     subject: resend ? `Reminder: latest board exam result on BoardExamTracker` : `${results.length} new PRC exam ${results.length === 1 ? 'result' : 'results'} on BoardExamTracker`,
-    html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">${escapeEmailHtml(heading)}</h1><p>${escapeEmailHtml(intro)}</p><ul>${itemHtml}</ul><p><a href="${escapeEmailHtml(baseUrl)}">View BoardExamTracker</a></p><hr><p style="font-size:12px;color:#718097">Independent tracker; not affiliated with PRC. <a href="${escapeEmailHtml(unsubscribeUrl)}">Unsubscribe from these emails</a>.</p></div>`,
-    text: `${heading}\n\n${intro}\n\n${itemText}\n\nUnsubscribe: ${unsubscribeUrl}`,
+    html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">${escapeEmailHtml(heading)}</h1><p>${escapeEmailHtml(intro)}</p><ul>${itemHtml}</ul><p><a href="${escapeEmailHtml(baseUrl)}">View BoardExamTracker</a></p><hr><p style="font-size:12px;color:#718097">Independent tracker; not affiliated with PRC.${unsubscribeUrl ? ` <a href="${escapeEmailHtml(unsubscribeUrl)}">Unsubscribe from these emails</a>.` : ''}</p></div>`,
+    text: `${heading}\n\n${intro}\n\n${itemText}${unsubscribeUrl ? `\n\nUnsubscribe: ${unsubscribeUrl}` : ''}`,
   });
 }
 

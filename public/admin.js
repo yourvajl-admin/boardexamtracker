@@ -5,8 +5,8 @@ const dashboardStatus = document.querySelector('#dashboard-status');
 const subscriberRows = document.querySelector('#subscriber-rows');
 const subscriberEmpty = document.querySelector('#subscriber-empty');
 const searchInput = document.querySelector('#subscriber-search');
-const testAlertForm = document.querySelector('#test-alert-form');
-const testAlertStatus = document.querySelector('#test-alert-status');
+const latestAlertForm = document.querySelector('#latest-alert-form');
+const latestAlertStatus = document.querySelector('#latest-alert-status');
 const adsToggleButton = document.querySelector('#ads-toggle-button');
 const adsControlStatus = document.querySelector('#ads-control-status');
 let subscribers = [];
@@ -236,21 +236,21 @@ loginForm.addEventListener('submit', async (event) => {
 
 searchInput.addEventListener('input', renderSubscribers);
 
-testAlertForm.addEventListener('submit', async (event) => {
+latestAlertForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = testAlertForm.querySelector('button');
-  const email = document.querySelector('#test-alert-email').value.trim();
+  const button = latestAlertForm.querySelector('button');
+  const email = document.querySelector('#latest-alert-email').value.trim();
   button.disabled = true;
-  testAlertStatus.textContent = 'Preparing latest result email…';
+  latestAlertStatus.textContent = 'Preparing latest result alert…';
   try {
-    const data = await request('/api/admin/test-latest-result', {
+    const data = await request('/api/admin/send-latest-result', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     });
-    testAlertStatus.textContent = `Test alert sent to ${email}. Check your inbox and spam folder.`;
+    latestAlertStatus.textContent = `Latest result alert sent to ${email}: ${data.title}. Check the inbox and spam folder.`;
   } catch (error) {
-    testAlertStatus.textContent = error.message;
+    latestAlertStatus.textContent = error.message;
   } finally {
     button.disabled = false;
   }
