@@ -74,7 +74,7 @@ async function loadResult() {
         ? `<ul>${linksData.details.facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join('')}</ul>`
         : '';
       resources.innerHTML = linksData.resources?.length
-        ? `<ul class="result-file-links">${linksData.resources.map((resource) => `<li><a href="${escapeHtml(resource.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(resource.label)}<span aria-hidden="true">↗</span></a></li>`).join('')}</ul><div class="result-file-previews">${linksData.resources.map(renderResource).join('')}</div>`
+        ? `<div class="result-file-previews">${linksData.resources.map(renderResource).join('')}</div>`
         : '<p class="dialog-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';
     } catch {
       resources.innerHTML = `<p class="dialog-empty">The result details are shown above. PRC’s attached files are temporarily unavailable here. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>.</p>`;
