@@ -1,6 +1,11 @@
 const cheerio = require('cheerio');
 const { execFile } = require('node:child_process');
+const dns = require('node:dns');
 const { promisify } = require('node:util');
+
+// PRC's web server is intermittently unreachable over IPv6 from hosted runners.
+// Prefer IPv4 for Node's fetch so a broken IPv6 route does not fail the check.
+dns.setDefaultResultOrder('ipv4first');
 
 const SOURCE_URL = 'https://www.prc.gov.ph/articles/exam-results';
 const ALLOWED_HOSTS = new Set(['prc.gov.ph', 'www.prc.gov.ph']);
@@ -191,7 +196,7 @@ async function fetchPrcHtml(sourceUrl, { maxBytes = 2 * 1024 * 1024 } = {}) {
       } catch (fetchError) {
         try {
           const { stdout } = await execFileAsync('curl', [
-            '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '12',
+            '--ipv4', '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '12',
             '--user-agent', 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
             '--header', 'Accept: text/html,application/xhtml+xml',
             url,
