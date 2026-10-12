@@ -10,10 +10,10 @@ async function main() {
   try {
     results = await fetchResults({ maxPage: 2 });
   } catch (error) {
-    // A PRC connection failure is not an empty feed. Do not update the result
-    // baseline or send alerts from partial data; the next scheduled run retries.
-    console.log(`::warning::PRC was unreachable after retries. No results or email alerts were changed; the saved website cache remains in place. The next scheduled run will retry. ${error.message}`);
-    return;
+    // A PRC connection failure is not an empty feed. Fail this run so the
+    // outage is visible; the next scheduled run will retry without changing
+    // the baseline or sending alerts from partial data.
+    throw new Error(`PRC was unreachable after retries. No results or email alerts were changed; the next scheduled run will retry. ${error.message}`);
   }
   const response = await fetch('https://www.boardexamtracker.com/api/cron/check-results', {
     method: 'POST',
@@ -28,6 +28,16 @@ async function main() {
   const message = await response.text();
   if (!response.ok) throw new Error(`BoardExamTracker returned HTTP ${response.status}: ${message}`);
   const result = JSON.parse(message);
+  const summary = result.initialized
+    ? 'Initialized the PRC result baseline; no historical alerts were sent.'
+    : result.skipped
+      ? `Skipped this check: ${result.reason || 'another check is running.'}`
+      : `Found ${result.newResults || 0} new result(s); sent alerts to ${result.recipients || 0} confirmed subscriber(s).`;
+  process.stdout.write(`::notice::${summary}\n`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const fs = require('node:fs');
+    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### PRC result check\n\n${summary}\n`);
+  }
 
   const announcements = [];
   for (const url of result.announcementUrls || []) {
