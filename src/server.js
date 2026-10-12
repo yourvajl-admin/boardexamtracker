@@ -36,6 +36,12 @@ const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CACHE_KEY = 'boardexamtracker:results-cache:v1';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
+const BLOG_POSTS_KEY = 'boardexamtracker:blog:posts';
+const BLOG_POST_INDEX_KEY = 'boardexamtracker:blog:index';
+const BLOG_POST_IMAGE_KEY_PREFIX = 'boardexamtracker:blog:image:';
+const BLOG_POSTS_FILE = path.join(__dirname, '..', 'data', 'blog-posts.json');
+const BLOG_POST_LIMIT = 100;
+const BLOG_PHOTO_LIMIT_BYTES = 1_000_000;
 const ANNOUNCEMENT_CACHE_KEY_PREFIX = 'boardexamtracker:announcement-links:v1:';
 let pendingFetch = null;
 let pendingArchiveFetch = null;
@@ -48,6 +54,7 @@ let recentResultIndexPromise = null;
 let fullResultIndex = null;
 let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
+let localBlogPosts = null;
 
 function announcementCacheKey(articleUrl) {
   return `${ANNOUNCEMENT_CACHE_KEY_PREFIX}${Buffer.from(articleUrl).toString('base64url')}`;
@@ -110,11 +117,115 @@ function restoreBundledResultCache() {
   return setCache(mergeResultLists(cached?.results || [], results), fetchedAt);
 }
 
+async function readLocalBlogPosts() {
+  if (localBlogPosts) return localBlogPosts;
+  try {
+    const stored = JSON.parse(await fs.readFile(BLOG_POSTS_FILE, 'utf8'));
+    localBlogPosts = Array.isArray(stored) ? stored : [];
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    localBlogPosts = [];
+  }
+  return localBlogPosts;
+}
+
+function publicBlogPost(post) {
+  const { imageData, ...fields } = post;
+  return { ...fields, imageUrl: post.hasImage ? `/api/blog/posts/${encodeURIComponent(post.id)}/image?v=${post.updatedAt}` : null };
+}
+
+async function listBlogPosts(offset = 0, limit = BLOG_POST_LIMIT) {
+  if (isPersistentStorageConfigured()) {
+    const ids = await redisCommand('ZREVRANGE', BLOG_POST_INDEX_KEY, String(offset), String(offset + limit - 1));
+    if (!Array.isArray(ids) || !ids.length) return [];
+    const values = await redisCommand('HMGET', BLOG_POSTS_KEY, ...ids);
+    return (Array.isArray(values) ? values : []).flatMap((value) => {
+      if (typeof value !== 'string') return [];
+      try { return [publicBlogPost(JSON.parse(value))]; } catch { return []; }
+    });
+  }
+  if (process.env.NODE_ENV === 'production') throw new Error('Persistent blog storage is not configured.');
+  return (await readLocalBlogPosts())
+    .slice()
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(offset, offset + limit)
+    .map(publicBlogPost);
+}
+
+async function getBlogPostById(id) {
+  if (isPersistentStorageConfigured()) {
+    const value = await redisCommand('HGET', BLOG_POSTS_KEY, id);
+    if (typeof value !== 'string') return null;
+    try { return JSON.parse(value); } catch { return null; }
+  }
+  if (process.env.NODE_ENV === 'production') throw new Error('Persistent blog storage is not configured.');
+  return (await readLocalBlogPosts()).find((post) => post.id === id) || null;
+}
+
+async function saveBlogPost(post, imageData) {
+  const metadata = {
+    id: post.id,
+    title: post.title,
+    body: post.body,
+    hasImage: Boolean(post.hasImage),
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt,
+  };
+  if (isPersistentStorageConfigured()) {
+    const imageKey = `${BLOG_POST_IMAGE_KEY_PREFIX}${post.id}`;
+    if (imageData !== undefined) {
+      if (imageData) await redisCommand('SET', imageKey, imageData);
+      else await redisCommand('DEL', imageKey);
+    }
+    await redisCommand('HSET', BLOG_POSTS_KEY, post.id, JSON.stringify(metadata));
+    await redisCommand('ZADD', BLOG_POST_INDEX_KEY, String(post.updatedAt), post.id);
+    return metadata;
+  }
+  if (process.env.NODE_ENV === 'production') throw new Error('Persistent blog storage is not configured.');
+  const posts = await readLocalBlogPosts();
+  const index = posts.findIndex((item) => item.id === post.id);
+  const existing = index >= 0 ? posts[index] : null;
+  const stored = { ...metadata, imageData: imageData === undefined ? existing?.imageData || null : imageData };
+  if (index >= 0) posts[index] = stored;
+  else posts.unshift(stored);
+  const temporary = `${BLOG_POSTS_FILE}.${process.pid}.tmp`;
+  await fs.mkdir(path.dirname(BLOG_POSTS_FILE), { recursive: true });
+  await fs.writeFile(temporary, JSON.stringify(posts), { mode: 0o600 });
+  await fs.rename(temporary, BLOG_POSTS_FILE);
+  return stored;
+}
+
+async function normalizeBlogPhoto(dataUrl) {
+  if (dataUrl === null || dataUrl === '') return null;
+  if (typeof dataUrl !== 'string') throw new Error('Choose a JPG, PNG, or WebP photo.');
+  const match = /^data:image\/(?:jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl);
+  if (!match) throw new Error('Choose a JPG, PNG, or WebP photo.');
+  const input = Buffer.from(match[1], 'base64');
+  if (!input.length || input.length > BLOG_PHOTO_LIMIT_BYTES) throw new Error('The photo must be 1 MB or smaller after upload.');
+  const image = sharp(input, { limitInputPixels: 25_000_000 });
+  const metadata = await image.metadata();
+  if (!['jpeg', 'png', 'webp'].includes(metadata.format)) throw new Error('Choose a JPG, PNG, or WebP photo.');
+  const output = await sharp(input, { limitInputPixels: 25_000_000 })
+    .rotate()
+    .resize({ width: 1600, height: 1200, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 82 })
+    .toBuffer();
+  if (output.length > BLOG_PHOTO_LIMIT_BYTES) throw new Error('The optimized photo is too large. Choose a smaller image.');
+  return output.toString('base64');
+}
+
+function blogStorageReady(res) {
+  if (process.env.NODE_ENV !== 'production' || isPersistentStorageConfigured()) return true;
+  res.status(503).json({ error: 'Shared Redis storage is required to publish and manage blog posts in production.' });
+  return false;
+}
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
   const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links'].includes(req.path);
-  const limit = isCronPayload ? '256kb' : '10kb';
+  const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
+  const limit = isCronPayload ? '256kb' : isBlogWrite ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
 });
 app.get('/sitemap.xml', async (_req, res) => {
@@ -126,6 +237,7 @@ app.get('/sitemap.xml', async (_req, res) => {
     if (!latest) latest = { results: await fetchResults({ maxPage: 0 }) };
     const urls = [
       '<url><loc>https://www.boardexamtracker.com/</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>',
+      '<url><loc>https://www.boardexamtracker.com/blog.html</loc><changefreq>daily</changefreq><priority>0.6</priority></url>',
       '<url><loc>https://www.boardexamtracker.com/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>',
       ...latest.results.map((item) => `<url><loc>https://www.boardexamtracker.com/results/${encodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop())}</loc><lastmod>${item.date}</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>`),
     ];
@@ -223,6 +335,7 @@ app.get('/admin', (_req, res) => {
   res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive', 'X-Frame-Options': 'DENY' });
   res.redirect(302, '/admin.html');
 });
+app.get('/blog', (_req, res) => res.redirect(302, '/blog.html'));
 app.get('/api/admin/session', (_req, res) => {
   const config = adminConfig();
   res.json({ configured: config.configured, authenticated: config.configured && isAuthenticated(_req) });
@@ -278,6 +391,119 @@ app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
   } catch (error) {
     console.error('Could not load admin subscriber list:', error.message);
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
+  }
+});
+app.get('/api/blog/posts', async (req, res) => {
+  const requestedOffset = Number.parseInt(req.query.offset, 10);
+  const offset = Number.isInteger(requestedOffset) && requestedOffset > 0 ? Math.min(requestedOffset, 10_000) : 0;
+  try {
+    const posts = await listBlogPosts(offset, 11);
+    return res.json({ posts: posts.slice(0, 10), hasMore: posts.length > 10 });
+  } catch (error) {
+    console.error('Could not load blog posts:', error.message);
+    return res.status(503).json({ error: 'Blog posts are temporarily unavailable.' });
+  }
+});
+app.get('/api/blog/posts/:id/image', async (req, res) => {
+  const { id } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(404).end();
+  try {
+    let imageData;
+    if (isPersistentStorageConfigured()) imageData = await redisCommand('GET', `${BLOG_POST_IMAGE_KEY_PREFIX}${id}`);
+    else if (process.env.NODE_ENV !== 'production') imageData = (await getBlogPostById(id))?.imageData;
+    if (typeof imageData !== 'string' || !imageData) return res.status(404).end();
+    res.set({ 'Content-Type': 'image/webp', 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
+    return res.send(Buffer.from(imageData, 'base64'));
+  } catch (error) {
+    console.error('Could not load blog photo:', error.message);
+    return res.status(503).end();
+  }
+});
+app.get('/api/admin/blog/posts', requireAdmin, async (_req, res) => {
+  if (!blogStorageReady(res)) return;
+  try {
+    return res.json({ posts: await listBlogPosts(0, BLOG_POST_LIMIT) });
+  } catch (error) {
+    console.error('Could not load posts for admin:', error.message);
+    return res.status(503).json({ error: 'Blog posts could not be loaded. Check shared storage and try again.' });
+  }
+});
+app.post('/api/admin/blog/posts', requireAdmin, async (req, res) => {
+  if (!blogStorageReady(res)) return;
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  if (!title || title.length > 180) return res.status(400).json({ error: 'Add a title between 1 and 180 characters.' });
+  if (!body || body.length > 16_000) return res.status(400).json({ error: 'Add post text between 1 and 16,000 characters.' });
+  let imageData;
+  try {
+    imageData = await normalizeBlogPhoto(req.body?.image ?? null);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  try {
+    const posts = await listBlogPosts(0, BLOG_POST_LIMIT);
+    if (posts.length >= BLOG_POST_LIMIT) return res.status(409).json({ error: `The blog can store up to ${BLOG_POST_LIMIT} posts. Delete an older post before adding another.` });
+    const now = Date.now();
+    const post = { id: randomUUID(), title, body, hasImage: Boolean(imageData), createdAt: now, updatedAt: now };
+    const saved = await saveBlogPost(post, imageData);
+    return res.status(201).json({ post: publicBlogPost(saved) });
+  } catch (error) {
+    console.error('Could not create blog post:', error.message);
+    return res.status(503).json({ error: 'The post could not be saved. Check shared storage and try again.' });
+  }
+});
+app.put('/api/admin/blog/posts/:id', requireAdmin, async (req, res) => {
+  if (!blogStorageReady(res)) return;
+  const { id } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(404).json({ error: 'Post not found.' });
+  try {
+    const existing = await getBlogPostById(id);
+    if (!existing) return res.status(404).json({ error: 'Post not found.' });
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!title || title.length > 180) return res.status(400).json({ error: 'Add a title between 1 and 180 characters.' });
+    if (!body || body.length > 16_000) return res.status(400).json({ error: 'Add post text between 1 and 16,000 characters.' });
+    let imageData;
+    if (Object.hasOwn(req.body || {}, 'image')) {
+      try { imageData = await normalizeBlogPhoto(req.body.image); }
+      catch (error) { return res.status(400).json({ error: error.message }); }
+    }
+    const post = {
+      id,
+      title,
+      body,
+      hasImage: imageData === undefined ? Boolean(existing.hasImage) : Boolean(imageData),
+      createdAt: existing.createdAt,
+      updatedAt: Date.now(),
+    };
+    const saved = await saveBlogPost(post, imageData);
+    return res.json({ post: publicBlogPost(saved) });
+  } catch (error) {
+    console.error('Could not update blog post:', error.message);
+    return res.status(503).json({ error: 'The post could not be updated. Check shared storage and try again.' });
+  }
+});
+app.delete('/api/admin/blog/posts/:id', requireAdmin, async (req, res) => {
+  if (!blogStorageReady(res)) return;
+  const { id } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return res.status(404).json({ error: 'Post not found.' });
+  try {
+    const existing = await getBlogPostById(id);
+    if (!existing) return res.status(404).json({ error: 'Post not found.' });
+    if (isPersistentStorageConfigured()) {
+      await redisCommand('HDEL', BLOG_POSTS_KEY, id);
+      await redisCommand('ZREM', BLOG_POST_INDEX_KEY, id);
+      await redisCommand('DEL', `${BLOG_POST_IMAGE_KEY_PREFIX}${id}`);
+    } else {
+      localBlogPosts = (await readLocalBlogPosts()).filter((post) => post.id !== id);
+      const temporary = `${BLOG_POSTS_FILE}.${process.pid}.tmp`;
+      await fs.writeFile(temporary, JSON.stringify(localBlogPosts), { mode: 0o600 });
+      await fs.rename(temporary, BLOG_POSTS_FILE);
+    }
+    return res.json({ deleted: true });
+  } catch (error) {
+    console.error('Could not delete blog post:', error.message);
+    return res.status(503).json({ error: 'The post could not be deleted. Check shared storage and try again.' });
   }
 });
 async function getLatestAvailableResult() {
