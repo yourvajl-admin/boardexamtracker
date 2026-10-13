@@ -12,7 +12,9 @@ const ALLOWED_HOSTS = new Set(['prc.gov.ph', 'www.prc.gov.ph']);
 const RESULT_TERMS = /\b(result|results|licensure examination|board examination|examination result)\b/i;
 const PAGE_DELAY_MS = 500;
 const SOURCE_HOSTS = ['www.prc.gov.ph', 'prc.gov.ph'];
-const SOURCE_RETRY_DELAYS_MS = [750, 2000];
+// PRC sometimes refuses new connections briefly; back off across multiple
+// runner attempts instead of exhausting all retries within a few seconds.
+const SOURCE_RETRY_DELAYS_MS = [1000, 4000, 12000];
 const execFileAsync = promisify(execFile);
 const PRC_REQUEST_HEADERS = {
   'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)',
@@ -189,18 +191,18 @@ async function fetchPrcHtml(sourceUrl, { maxBytes = 2 * 1024 * 1024 } = {}) {
       try {
         const response = await fetch(url, {
           headers: PRC_REQUEST_HEADERS,
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(8000),
         });
         if (!response.ok) throw new Error(`PRC returned HTTP ${response.status}`);
         return await response.text();
       } catch (fetchError) {
         try {
           const { stdout } = await execFileAsync('curl', [
-            '--ipv4', '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '12',
+            '--ipv4', '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '8',
             '--user-agent', 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
             '--header', 'Accept: text/html,application/xhtml+xml',
             url,
-          ], { maxBuffer: maxBytes, timeout: 14000 });
+          ], { maxBuffer: maxBytes, timeout: 10000 });
           return stdout;
         } catch (curlError) {
           errors.push(`${new URL(url).hostname}: ${fetchError.message}; curl: ${curlError.message}`);
