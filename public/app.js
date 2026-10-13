@@ -48,6 +48,19 @@ function formatDate(value) {
 function resultSlug(item) {
   return decodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop() || 'result');
 }
+function mergeUniqueResults(...lists) {
+  const merged = new Map();
+  for (const item of lists.flat()) {
+    try {
+      const url = new URL(item.url);
+      if (!['www.prc.gov.ph', 'prc.gov.ph'].includes(url.hostname)) continue;
+      url.pathname = url.pathname.replace(/^\/index\.php(?=\/article\/)/, '');
+      url.hash = '';
+      merged.set(url.href, { ...item, url: url.href });
+    } catch { /* Ignore malformed source links. */ }
+  }
+  return [...merged.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
 function isRecent(date, days) {
   const d = new Date(`${date}T00:00:00`);
   const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -229,14 +242,13 @@ async function loadResults(refresh = false) {
     const response = await fetch(`/api/results${refresh ? '?refresh=true' : ''}`, { headers: { Accept: 'application/json' } });
     const data = await response.json();
     state.professions = Array.isArray(data.professions) ? data.professions : state.professions;
-    renderProfessionCards();
     if (!response.ok) throw new Error(data.error || 'Unable to retrieve the latest PRC results.');
     const incoming = Array.isArray(data.results) ? data.results : [];
     if (state.archiveLoaded || data.archiveLoaded) {
-      state.results = [...new Map([...state.results, ...incoming].map((item) => [item.url, item])).values()].sort((a, b) => b.date.localeCompare(a.date));
+      state.results = mergeUniqueResults(state.results, incoming);
       state.archiveLoaded = true;
     } else {
-      state.results = incoming;
+      state.results = mergeUniqueResults(incoming);
     }
     renderProfessionFilter(data.professions);
     updated.textContent = `Last updated: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
@@ -265,7 +277,7 @@ async function loadArchiveResults() {
       const response = await fetch('/api/results?archive=true', { headers: { Accept: 'application/json' } });
       const data = await response.json();
       if (!response.ok || !data.archiveLoaded) throw new Error(data.error || data.warning || 'Older results could not be loaded. Please try again.');
-      state.results = [...new Map([...state.results, ...(Array.isArray(data.results) ? data.results : [])].map((item) => [item.url, item])).values()].sort((a, b) => b.date.localeCompare(a.date));
+      state.results = mergeUniqueResults(state.results, Array.isArray(data.results) ? data.results : []);
       state.archiveLoaded = true;
       if (Array.isArray(data.professions)) state.professions = data.professions;
       renderProfessionFilter(state.professions);

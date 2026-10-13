@@ -646,7 +646,11 @@ app.get('/ads.txt', (_req, res) => {
 
 function mergeResultLists(...lists) {
   const merged = new Map();
-  for (const result of lists.flat()) merged.set(result.url, result);
+  for (const result of lists.flat()) {
+    const url = normalizeUrl(result?.url);
+    if (!url || !result?.title || !result?.date) continue;
+    merged.set(url, { ...result, url });
+  }
   return [...merged.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
@@ -657,7 +661,7 @@ async function restorePersistentResultCache() {
     if (typeof saved !== 'string') return null;
     const snapshot = JSON.parse(saved);
     if (!Array.isArray(snapshot.results) || !snapshot.results.length) return null;
-    const results = snapshot.results.filter((result) => result?.title && result?.date && normalizeUrl(result.url));
+    const results = mergeResultLists(snapshot.results);
     if (!results.length) return null;
     const fetchedAt = Number.isFinite(snapshot.fetchedAt) ? snapshot.fetchedAt : Date.now();
     const restored = setCache(results, fetchedAt);
@@ -1048,9 +1052,15 @@ app.get('/api/results', async (req, res) => {
     }
   }
   const force = req.query.refresh === 'true';
-  if (!force && isFresh()) {
+  if (!force) {
+    await restorePersistentResultCache();
+    restoreBundledResultCache();
     const cached = getCache();
-    return res.json({ results: cached.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale: false, source: SOURCE_URL });
+    if (cached) {
+      const stale = !isFresh();
+      if (stale) refresh().catch((error) => console.warn('Background PRC result refresh failed:', error.message));
+      return res.json({ results: cached.results.slice(0, INITIAL_RESULTS_LIMIT), professions: PROFESSION_CATEGORIES, lastUpdated: new Date(cached.fetchedAt).toISOString(), cached: true, archiveLoaded: false, stale, source: SOURCE_URL, ...(stale ? { warning: 'Showing the latest saved results while the official feed refreshes.' } : {}) });
+    }
   }
   try {
     const value = await refresh();
