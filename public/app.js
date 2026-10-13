@@ -7,7 +7,7 @@ const SEARCH_ALIASES = {
   let: ['teacher', 'professional teachers'],
   cpa: ['certified public accountant', 'accountancy'],
 };
-const state = { results: [], professions: [], query: '', filter: 'all', profession: 'all', year: 'all', limit: PAGE_SIZE, archiveLoaded: false };
+const state = { results: [], professions: [], query: new URLSearchParams(location.search).get('q')?.trim() || '', filter: 'all', profession: 'all', year: 'all', limit: PAGE_SIZE, archiveLoaded: false };
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 let resultsRequestActive = false;
 let archiveRequest = null;
@@ -30,6 +30,7 @@ const emailAlertStatusMessage = document.querySelector('#email-alert-status-mess
 const emailAlertAvailability = document.querySelector('#email-alert-availability');
 const emailAlertButton = emailAlertForm.querySelector('button[type="submit"]');
 const yearFilter = document.querySelector('#year-filter');
+document.querySelector('#search-input').value = state.query;
 let emailAlertsEnabled = false;
 let adsenseConfig = null;
 let adsenseScriptElement = document.querySelector('script[src^="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]');
