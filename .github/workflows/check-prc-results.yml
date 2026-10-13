@@ -13,7 +13,8 @@ permissions: {}
 
 jobs:
   check-results:
-    runs-on: ubuntu-latest
+    # Use a separate GitHub-hosted network path to reach the official PRC page.
+    runs-on: macos-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
