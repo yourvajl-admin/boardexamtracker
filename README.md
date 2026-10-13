@@ -59,7 +59,21 @@ Set `PORT` to change the default port (3000). Email alerts use Resend and requir
 - `PUBLIC_BASE_URL`: public HTTPS site URL used in confirmation and unsubscribe links (for local development, `http://localhost:3000` is accepted).
 - `CRON_SECRET`: long random secret protecting the scheduled result-check endpoint; add the same value to GitHub Actions as `BOARD_EXAMTRACKER_CRON_SECRET`.
 
-Copy `.env.example` to `.env`, fill in those values, then restart the server. Without email configuration, the signup form reports that email alerts are unavailable. In production, the GitHub Actions workflow fetches the official PRC feed every five minutes and submits the announcements to the site, which stores the shared result snapshot and known links in Upstash Redis. Its first run establishes the baseline without emailing old results; later new announcements are sent to confirmed subscribers. Add the same `CRON_SECRET` value to Vercel and to GitHub under Settings → Secrets and variables → Actions as `BOARD_EXAMTRACKER_CRON_SECRET`. GitHub may delay scheduled runs during busy periods. The user confirms subscription by email, and each alert contains an unsubscribe link.
+Copy `.env.example` to `.env`, fill in those values, then restart the server. Without email configuration, the signup form reports that email alerts are unavailable. In production, the Cloudflare Worker fetches the official PRC feed every five minutes and submits announcements to the site, which stores the shared result snapshot and known links in Upstash Redis. Its first run establishes the baseline without emailing old results; later new announcements are sent to confirmed subscribers. The manual GitHub Actions workflow is retained for on-demand diagnostics, but Cloudflare is the automatic checker. The user confirms subscription by email, and each alert contains an unsubscribe link.
+
+### Cloudflare scheduled checker
+
+`cloudflare/prc-checker.js` runs on Cloudflare Workers, reads the official PRC results page and linked PDFs, and submits parsed results to the production API so the existing publish, persistence, and subscriber-email logic remains in use. Its five-minute schedule has been deployed and confirmed to reach PRC and the production API. New deployments require Cloudflare Wrangler authentication.
+
+From the repository root, sign in and deploy it with Wrangler:
+
+```sh
+npx wrangler@latest login
+npx wrangler@latest deploy --config cloudflare/wrangler.toml
+npx wrangler@latest secret put CRON_SECRET --config cloudflare/wrangler.toml
+```
+
+For `CRON_SECRET`, use the same value configured as `CRON_SECRET` in the production Vercel environment. If rotating it, update Vercel and GitHub's `BOARD_EXAMTRACKER_CRON_SECRET`, redeploy Vercel, and set the Worker secret with Wrangler. Check Cloudflare Workers → Logs to confirm scheduled invocations and inspect errors.
 
 ## Private admin page
 

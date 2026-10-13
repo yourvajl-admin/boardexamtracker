@@ -1,0 +1,7 @@
+name = "boardexamtracker-prc-checker"
+main = "prc-checker.js"
+compatibility_date = "2026-10-13"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/5 * * * *"]
