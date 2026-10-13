@@ -15,6 +15,34 @@ function resultSlugFromUrl(value) {
   catch { return ''; }
 }
 
+function canonicalAnnouncementUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || !['www.prc.gov.ph', 'prc.gov.ph'].includes(url.hostname)) return '';
+    url.pathname = url.pathname.replace(/^\/index\.php(?=\/article\/)/, '');
+    url.hash = '';
+    return url.href;
+  } catch { return ''; }
+}
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function fetchAnnouncementLinks(articleUrl) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`/api/announcement-links?url=${encodeURIComponent(articleUrl)}`, { headers: { Accept: 'application/json' } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load the files linked by this announcement.');
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await wait(1500 * (attempt + 1));
+    }
+  }
+  throw lastError || new Error('Could not load the files linked by this announcement.');
+}
+
 function previewUrl(value) {
   try {
     const url = new URL(value);
@@ -62,13 +90,13 @@ async function loadResult() {
     const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(resultSlug)}`;
     const description = (item.description || `View the ${item.category || 'professional licensure'} result documents linked to this announcement.`).slice(0, 300);
     setMeta(item, description, canonical);
-    resultContent.innerHTML = `<div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><div id="result-paragraphs" class="detail-announcement"><p class="detail-summary">${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p></div><div class="detail-source-note"><span aria-hidden="true">✓</span><p>BoardExamTracker is an independent information platform. The attached files are served by the original source. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="result-facts" class="result-facts"></div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading files linked by the announcement…</p></div></section>`;
+    const announcementUrl = canonicalAnnouncementUrl(item.url);
+    resultContent.innerHTML = `<div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><div id="result-paragraphs" class="detail-announcement"><p class="detail-summary">${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p></div><div class="detail-source-note"><span aria-hidden="true">✓</span><p>BoardExamTracker is an independent information platform. The attached files are served by the original source. <a href="${escapeHtml(announcementUrl || item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="result-facts" class="result-facts"></div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading files linked by the announcement…</p></div></section>`;
 
     const resources = document.querySelector('#detail-resources');
     try {
-      const linksResponse = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`, { headers: { Accept: 'application/json' } });
-      const linksData = await linksResponse.json();
-      if (!linksResponse.ok) throw new Error(linksData.error || 'Could not load the files linked by this announcement.');
+      if (!announcementUrl) throw new Error('The PRC announcement link is invalid.');
+      const linksData = await fetchAnnouncementLinks(announcementUrl);
       if (linksData.details?.paragraphs?.length) {
         document.querySelector('#result-paragraphs').innerHTML = linksData.details.paragraphs.map((paragraph) => `<p class="detail-summary">${escapeHtml(paragraph)}</p>`).join('');
       } else if (linksData.details?.summary) {
@@ -81,7 +109,8 @@ async function loadResult() {
         ? `<div class="result-file-previews">${linksData.resources.map(renderResource).join('')}</div>`
         : '<p class="dialog-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';
     } catch {
-      resources.innerHTML = `<p class="dialog-empty">The result details are shown above. PRC’s attached files are temporarily unavailable here. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>.</p>`;
+      resources.innerHTML = `<p class="dialog-empty">The result details are shown above. We could not load the attached files just now. <a href="${escapeHtml(announcementUrl || item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>, or <button type="button" id="retry-result-files">retry loading the files</button>.</p>`;
+      document.querySelector('#retry-result-files')?.addEventListener('click', () => loadResult());
     }
   } catch (error) {
     resultContent.innerHTML = `<h1>Result unavailable</h1><p class="detail-summary">${escapeHtml(error.message || 'This result could not be loaded right now.')}</p><a class="result-home-link" href="/">Back to latest results</a>`;
