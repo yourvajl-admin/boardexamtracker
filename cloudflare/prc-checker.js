@@ -141,6 +141,40 @@ async function publishCheck(env) {
   if (!results.length) throw new Error('No dated result announcements were parsed from PRC.');
 
   const siteUrl = (env.SITE_CRON_URL || 'https://www.boardexamtracker.com/api/cron/check-results').replace(/\/$/, '');
+  // Prepare details and PDF links before the result is made public or alerts
+  // are sent. This keeps new result pages complete on their first visit.
+  const prepareUrl = siteUrl.replace(/\/check-results$/, '/prepare-announcement-links');
+  const preparedResponse = await fetch(prepareUrl, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.CRON_SECRET}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results }),
+    signal: AbortSignal.timeout(60000),
+  });
+  const preparedBody = await preparedResponse.text();
+  if (!preparedResponse.ok) throw new Error(`Site attachment preparation returned HTTP ${preparedResponse.status}: ${preparedBody}`);
+  const prepared = JSON.parse(preparedBody);
+  const preparedAnnouncements = [];
+  for (const url of prepared.announcementUrls || []) {
+    const html = await fetchPrcArticle(url);
+    const details = extractAnnouncementDetails(html);
+    const resources = extractResources(html, url);
+    if (!details.paragraphs.length || !resources.length) throw new Error(`PRC announcement details or result files were unavailable for ${url}; the result will not be published yet.`);
+    preparedAnnouncements.push({ url, resources, details });
+  }
+  if (preparedAnnouncements.length) {
+    const cacheUrl = siteUrl.replace(/\/check-results$/, '/cache-announcement-links');
+    const cachedResponse = await fetch(cacheUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.CRON_SECRET}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ announcements: preparedAnnouncements }),
+      signal: AbortSignal.timeout(60000),
+    });
+    const cachedBody = await cachedResponse.text();
+    if (!cachedResponse.ok) throw new Error(`Site attachment cache returned HTTP ${cachedResponse.status}: ${cachedBody}`);
+    const cached = JSON.parse(cachedBody);
+    if (cached.saved !== preparedAnnouncements.length) throw new Error(`Only ${cached.saved || 0} of ${preparedAnnouncements.length} new result attachment sets were saved; publication is paused.`);
+  }
+
   const response = await fetch(siteUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.CRON_SECRET}`, 'Content-Type': 'application/json' },
@@ -153,6 +187,7 @@ async function publishCheck(env) {
 
   const announcements = [];
   for (const url of summary.announcementUrls || []) {
+    if (preparedAnnouncements.some((entry) => entry.url === url)) continue;
     try {
       const fetched = await fetchPrcArticle(url);
       announcements.push({ url, resources: extractResources(fetched, url), details: extractAnnouncementDetails(fetched) });
@@ -176,12 +211,28 @@ async function publishCheck(env) {
 async function fetchPrcArticle(articleUrl) {
   const url = isPrcUrl(articleUrl, PRC_URL);
   if (!url || !/^\/(?:index\.php\/)?article\//.test(url.pathname)) throw new Error('Invalid PRC article URL.');
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BoardExamTracker/1.0)', Accept: 'text/html,application/xhtml+xml' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.text();
+  const errors = [];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    for (const host of PRC_HOSTS) {
+      const candidate = new URL(url.href);
+      candidate.hostname = host;
+      try {
+        const response = await fetch(candidate, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
+            Accept: 'text/html,application/xhtml+xml',
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      } catch (error) {
+        errors.push(`${host}: ${error.message}`);
+      }
+    }
+  }
+  throw new Error(`PRC announcement could not be fetched after retries (${errors.join(' | ')})`);
 }
 
 export default {

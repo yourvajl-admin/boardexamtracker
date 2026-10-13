@@ -15,7 +15,44 @@ async function main() {
     // the baseline or sending alerts from partial data.
     throw new Error(`PRC was unreachable after retries. No results or email alerts were changed; the next scheduled run will retry. ${error.message}`);
   }
-  const response = await fetch('https://www.boardexamtracker.com/api/cron/check-results', {
+  const siteUrl = 'https://www.boardexamtracker.com/api/cron/check-results';
+  const prepareResponse = await fetch(siteUrl.replace(/\/check-results$/, '/prepare-announcement-links'), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'BoardExamTracker scheduled result checker',
+    },
+    body: JSON.stringify({ results }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const prepareText = await prepareResponse.text();
+  if (!prepareResponse.ok) throw new Error(`BoardExamTracker attachment preparation returned HTTP ${prepareResponse.status}: ${prepareText}`);
+  const prepared = JSON.parse(prepareText);
+  const preparedAnnouncements = [];
+  for (const url of prepared.announcementUrls || []) {
+    const announcement = await fetchAnnouncementLinks(url);
+    if (!announcement.details?.paragraphs?.length || !announcement.resources?.length) throw new Error(`PRC announcement details or result files are not available for ${url}; the result was not published.`);
+    preparedAnnouncements.push({ url, ...announcement });
+  }
+  if (preparedAnnouncements.length) {
+    const cacheResponse = await fetch(siteUrl.replace(/\/check-results$/, '/cache-announcement-links'), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'BoardExamTracker scheduled result checker',
+      },
+      body: JSON.stringify({ announcements: preparedAnnouncements }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const cacheText = await cacheResponse.text();
+    if (!cacheResponse.ok) throw new Error(`BoardExamTracker attachment cache returned HTTP ${cacheResponse.status}: ${cacheText}`);
+    const cacheResult = JSON.parse(cacheText);
+    if (cacheResult.saved !== preparedAnnouncements.length) throw new Error(`Only ${cacheResult.saved || 0} of ${preparedAnnouncements.length} new result attachment sets were saved; the result was not published.`);
+  }
+
+  const response = await fetch(siteUrl, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secret}`,
@@ -41,6 +78,7 @@ async function main() {
 
   const announcements = [];
   for (const url of result.announcementUrls || []) {
+    if (preparedAnnouncements.some((entry) => entry.url === url)) continue;
     try {
       announcements.push({ url, ...(await fetchAnnouncementLinks(url)) });
     } catch (error) {
