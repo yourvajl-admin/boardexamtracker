@@ -16,7 +16,9 @@ function parseDate(value) {
 function isPrcUrl(href, base) {
   try {
     const url = new URL(href, base);
-    return url.protocol === 'https:' && ['prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname) ? url : null;
+    if (url.protocol !== 'https:' || !['prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname)) return null;
+    if (url.pathname.startsWith('/index.php/article/')) url.pathname = url.pathname.slice('/index.php'.length);
+    return url;
   } catch {
     return null;
   }
@@ -173,7 +175,7 @@ async function publishCheck(env) {
 
 async function fetchPrcArticle(articleUrl) {
   const url = isPrcUrl(articleUrl, PRC_URL);
-  if (!url || !/^\/article\//.test(url.pathname)) throw new Error('Invalid PRC article URL.');
+  if (!url || !/^\/(?:index\.php\/)?article\//.test(url.pathname)) throw new Error('Invalid PRC article URL.');
   const response = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BoardExamTracker/1.0)', Accept: 'text/html,application/xhtml+xml' },
     signal: AbortSignal.timeout(15000),

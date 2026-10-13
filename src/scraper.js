@@ -37,6 +37,7 @@ function normalizeUrl(href) {
   try {
     const url = new URL(href, SOURCE_URL);
     if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) return null;
+    if (url.pathname.startsWith('/index.php/article/')) url.pathname = url.pathname.slice('/index.php'.length);
     url.hash = '';
     return url.href;
   } catch {
