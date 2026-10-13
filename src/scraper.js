@@ -2,6 +2,7 @@ const cheerio = require('cheerio');
 const { execFile } = require('node:child_process');
 const dns = require('node:dns');
 const { promisify } = require('node:util');
+const { extractAnnouncementDetails } = require('./announcement-details');
 
 // PRC's web server is intermittently unreachable over IPv6 from hosted runners.
 // Prefer IPv4 for Node's fetch so a broken IPv6 route does not fail the check.
@@ -155,18 +156,6 @@ function rephraseResultDetails(title, category, sourceText) {
   }
   if (!facts.length && !passMatch) facts.push(`The announcement was published by PRC on ${title.match(/\b\d{4}\b/)?.[0] || 'the date shown above'}.`);
   return { summary, facts };
-}
-
-function extractAnnouncementDetails(html) {
-  const $ = cheerio.load(html);
-  const title = $('h1').first().text().replace(/\s+/g, ' ').trim();
-  const category = categorize(title);
-  const paragraphs = [];
-  $('article p, main p, .field--name-body p, .node__content p').each((_, element) => {
-    const text = $(element).text().replace(/\s+/g, ' ').trim();
-    if (text.length >= 25) paragraphs.push(text);
-  });
-  return rephraseResultDetails(title, category, paragraphs.join(' '));
 }
 
 async function fetchAnnouncementLinks(articleUrl) {

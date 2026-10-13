@@ -62,14 +62,18 @@ async function loadResult() {
     const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(resultSlug)}`;
     const description = (item.description || `View the ${item.category || 'professional licensure'} result documents linked to this announcement.`).slice(0, 300);
     setMeta(item, description, canonical);
-    resultContent.innerHTML = `<div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><p id="result-summary" class="detail-summary">${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p><div class="detail-source-note"><span aria-hidden="true">✓</span><p>BoardExamTracker is an independent information platform. The attached files are served by the original source. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="result-facts" class="result-facts"></div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading files linked by the announcement…</p></div></section>`;
+    resultContent.innerHTML = `<div class="eyebrow blue-eyebrow">BOARD EXAM RESULT</div><span class="detail-category">${escapeHtml(item.category || 'PRC Examination Result')}</span><h1>${escapeHtml(item.title)}</h1><p class="detail-date">Released ${escapeHtml(formatDate(item.date))}</p><div id="result-paragraphs" class="detail-announcement"><p class="detail-summary">${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p></div><div class="detail-source-note"><span aria-hidden="true">✓</span><p>BoardExamTracker is an independent information platform. The attached files are served by the original source. <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">View original PRC announcement</a>.</p></div><section class="detail-documents"><div class="eyebrow">FILES LINKED IN THE NOTICE</div><div id="result-facts" class="result-facts"></div><div id="detail-resources" class="detail-resources" aria-live="polite"><p class="dialog-loading">Loading files linked by the announcement…</p></div></section>`;
 
     const resources = document.querySelector('#detail-resources');
     try {
       const linksResponse = await fetch(`/api/announcement-links?url=${encodeURIComponent(item.url)}`, { headers: { Accept: 'application/json' } });
       const linksData = await linksResponse.json();
       if (!linksResponse.ok) throw new Error(linksData.error || 'Could not load the files linked by this announcement.');
-      if (linksData.details?.summary) document.querySelector('#result-summary').textContent = linksData.details.summary;
+      if (linksData.details?.paragraphs?.length) {
+        document.querySelector('#result-paragraphs').innerHTML = linksData.details.paragraphs.map((paragraph) => `<p class="detail-summary">${escapeHtml(paragraph)}</p>`).join('');
+      } else if (linksData.details?.summary) {
+        document.querySelector('#result-paragraphs').innerHTML = `<p class="detail-summary">${escapeHtml(linksData.details.summary)}</p>`;
+      }
       document.querySelector('#result-facts').innerHTML = linksData.details?.facts?.length
         ? `<ul>${linksData.details.facts.map((fact) => `<li>${escapeHtml(fact)}</li>`).join('')}</ul>`
         : '';

@@ -1,4 +1,5 @@
 const cheerio = require('cheerio');
+const { extractAnnouncementDetails } = require('../src/announcement-details');
 
 const PRC_URL = 'https://www.prc.gov.ph/articles/exam-results';
 const PRC_HOSTS = ['www.prc.gov.ph', 'prc.gov.ph'];
@@ -152,7 +153,7 @@ async function publishCheck(env) {
   for (const url of summary.announcementUrls || []) {
     try {
       const fetched = await fetchPrcArticle(url);
-      announcements.push({ url, resources: extractResources(fetched, url), details: { summary: '', facts: [] } });
+      announcements.push({ url, resources: extractResources(fetched, url), details: extractAnnouncementDetails(fetched) });
     } catch (error) {
       console.warn(`Could not read attachments from ${url}: ${error.message}`);
     }

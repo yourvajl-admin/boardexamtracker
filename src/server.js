@@ -102,7 +102,8 @@ async function missingAnnouncementUrls(results, limit = 12) {
   const missing = [];
   for (const articleUrl of urls) {
     if (missing.length >= limit) break;
-    if (!await getCachedAnnouncement(articleUrl)) missing.push(articleUrl);
+    const cached = await getCachedAnnouncement(articleUrl);
+    if (!cached || !Array.isArray(cached.details?.paragraphs) || !cached.details.paragraphs.length) missing.push(articleUrl);
   }
   return missing;
 }
@@ -225,7 +226,7 @@ app.set('trust proxy', 1);
 app.use((req, res, next) => {
   const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links'].includes(req.path);
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
-  const limit = isCronPayload ? '256kb' : isBlogWrite ? '2mb' : '10kb';
+  const limit = isCronPayload ? '1mb' : isBlogWrite ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
 });
 app.get('/sitemap.xml', async (_req, res) => {
@@ -1067,14 +1068,16 @@ app.get('/api/announcement-links', async (req, res) => {
     return res.status(400).json({ error: 'A valid PRC announcement URL is required.' });
   }
   const cached = await getCachedAnnouncement(articleUrl);
-  if (cached) {
+  if (cached && Array.isArray(cached.details?.paragraphs) && cached.details.paragraphs.length) {
     return res.json({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
     const announcement = await fetchAnnouncementLinks(articleUrl);
+    if (cached && !announcement.resources.length) announcement.resources = cached.resources;
     await saveAnnouncementCache(articleUrl, announcement);
     return res.json({ url: articleUrl, ...announcement, cached: false });
   } catch (error) {
+    if (cached) return res.json({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true, refreshError: true });
     return res.status(502).json({ error: 'Could not retrieve links from this PRC announcement.', message: error.message });
   }
 });
@@ -1098,11 +1101,14 @@ app.post('/api/cron/cache-announcement-links', async (req, res) => {
         return [];
       }
     });
+    const existing = await getCachedAnnouncement(articleUrl);
+    if (!resources.length && existing?.resources?.length) resources.push(...existing.resources);
     await saveAnnouncementCache(articleUrl, {
       resources,
       details: entry.details && typeof entry.details === 'object' ? {
         summary: typeof entry.details.summary === 'string' ? entry.details.summary.slice(0, 600) : '',
         facts: Array.isArray(entry.details.facts) ? entry.details.facts.filter((fact) => typeof fact === 'string').slice(0, 12).map((fact) => fact.slice(0, 240)) : [],
+        paragraphs: Array.isArray(entry.details.paragraphs) ? entry.details.paragraphs.filter((paragraph) => typeof paragraph === 'string').slice(0, 20).map((paragraph) => paragraph.slice(0, 3000)) : [],
       } : { summary: '', facts: [] },
     });
     saved += 1;
