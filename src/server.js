@@ -105,7 +105,7 @@ async function missingAnnouncementUrls(results, limit = 12) {
   for (const articleUrl of urls) {
     if (missing.length >= limit) break;
     const cached = await getCachedAnnouncement(articleUrl);
-    if (!cached || !Array.isArray(cached.details?.paragraphs) || !cached.details.paragraphs.length) missing.push(articleUrl);
+    if (!cached || !cached.resources?.length || !Array.isArray(cached.details?.paragraphs) || !cached.details.paragraphs.length) missing.push(articleUrl);
   }
   return missing;
 }
@@ -226,7 +226,7 @@ function blogStorageReady(res) {
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
-  const isCronPayload = req.method === 'POST' && ['/api/cron/prepare-announcement-links', '/api/cron/check-results', '/api/cron/cache-announcement-links'].includes(req.path);
+  const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links'].includes(req.path);
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
   const limit = isCronPayload ? '1mb' : isBlogWrite ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
@@ -915,40 +915,6 @@ app.get('/api/notifications/status', (_req, res) => {
   });
 });
 
-app.post('/api/cron/prepare-announcement-links', async (req, res) => {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
-  if (!isPersistentStorageConfigured()) return res.status(503).json({ error: 'Persistent result tracking is not configured.' });
-
-  try {
-    const sourceResults = Array.isArray(req.body?.results) ? req.body.results : [];
-    const latest = sourceResults
-      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
-      .sort((a, b) => b.date.localeCompare(a.date));
-    if (!latest.length) return res.status(400).json({ error: 'No valid PRC results were provided.' });
-
-    const saved = await redisCommand('GET', KNOWN_RESULTS_KEY);
-    if (typeof saved !== 'string') return res.json({ announcementUrls: [] });
-    const decoded = JSON.parse(saved);
-    if (!Array.isArray(decoded) || decoded.some((url) => typeof url !== 'string')) {
-      return res.status(503).json({ error: 'The saved result baseline is invalid; result publication is paused until it can be repaired.' });
-    }
-    const knownUrls = new Set(decoded.map(normalizeUrl).filter(Boolean));
-    const newResults = latest.filter((result) => !knownUrls.has(normalizeUrl(result.url)));
-    const announcementUrls = [];
-    for (const result of newResults) {
-      if (announcementUrls.length >= 12) break;
-      const url = normalizeUrl(result.url);
-      const cached = await getCachedAnnouncement(url);
-      if (!cached?.resources?.length || !cached.details?.paragraphs?.length) announcementUrls.push(url);
-    }
-    return res.json({ announcementUrls, newResults: newResults.length });
-  } catch (error) {
-    console.error('Could not prepare new result attachments:', error.message);
-    return res.status(503).json({ error: 'Could not prepare the new result attachments.' });
-  }
-});
-
 app.all('/api/cron/check-results', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) {
@@ -1104,7 +1070,7 @@ app.get('/api/announcement-links', async (req, res) => {
     return res.status(400).json({ error: 'A valid PRC announcement URL is required.' });
   }
   const cached = await getCachedAnnouncement(articleUrl);
-  if (cached && Array.isArray(cached.details?.paragraphs) && cached.details.paragraphs.length) {
+  if (cached && cached.resources?.length && Array.isArray(cached.details?.paragraphs) && cached.details.paragraphs.length) {
     return res.json({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
