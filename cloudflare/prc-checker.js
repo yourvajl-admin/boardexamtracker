@@ -17,7 +17,11 @@ function isPrcUrl(href, base) {
   try {
     const url = new URL(href, base);
     if (url.protocol !== 'https:' || !['prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname)) return null;
+    url.hostname = 'www.prc.gov.ph';
     if (url.pathname.startsWith('/index.php/article/')) url.pathname = url.pathname.slice('/index.php'.length);
+    if (url.pathname.startsWith('/article/')) url.pathname = url.pathname.replace(/\/+$/, '');
+    url.search = '';
+    url.hash = '';
     return url;
   } catch {
     return null;

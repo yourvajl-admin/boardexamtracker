@@ -7,7 +7,15 @@ const SEARCH_ALIASES = {
   let: ['teacher', 'professional teachers'],
   cpa: ['certified public accountant', 'accountancy'],
 };
-const state = { results: [], professions: [], query: new URLSearchParams(location.search).get('q')?.trim() || '', filter: 'all', profession: 'all', year: 'all', limit: PAGE_SIZE, archiveLoaded: false };
+const RESULTS_STORAGE_KEY = 'boardexamtracker:latest-results:v1';
+function readSavedResults() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(RESULTS_STORAGE_KEY) || 'null');
+    if (!Array.isArray(saved?.results)) return [];
+    return mergeUniqueResults(saved.results).slice(0, PAGE_SIZE);
+  } catch { return []; }
+}
+const state = { results: readSavedResults(), professions: [], query: new URLSearchParams(location.search).get('q')?.trim() || '', filter: 'all', profession: 'all', year: 'all', limit: PAGE_SIZE, archiveLoaded: false };
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 let resultsRequestActive = false;
 let archiveRequest = null;
@@ -54,7 +62,10 @@ function mergeUniqueResults(...lists) {
     try {
       const url = new URL(item.url);
       if (!['www.prc.gov.ph', 'prc.gov.ph'].includes(url.hostname)) continue;
+      url.hostname = 'www.prc.gov.ph';
       url.pathname = url.pathname.replace(/^\/index\.php(?=\/article\/)/, '');
+      if (url.pathname.startsWith('/article/')) url.pathname = url.pathname.replace(/\/+$/, '');
+      url.search = '';
       url.hash = '';
       merged.set(url.href, { ...item, url: url.href });
     } catch { /* Ignore malformed source links. */ }
@@ -250,6 +261,7 @@ async function loadResults(refresh = false) {
     } else {
       state.results = mergeUniqueResults(incoming);
     }
+    try { localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify({ results: state.results.slice(0, PAGE_SIZE) })); } catch { /* Storage is optional. */ }
     renderProfessionFilter(data.professions);
     updated.textContent = `Last updated: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
     setNotice(data.stale ? 'Showing the latest cached results.' : data.warning || '');
@@ -445,6 +457,11 @@ emailAlertForm.addEventListener('submit', async (event) => {
 document.querySelector('#email-alert-status-close').addEventListener('click', () => {
   emailAlertStatus.hidden = true;
 });
+if (state.results.length) {
+  updated.textContent = 'Showing saved latest results while checking for updates…';
+  renderProfessionCards();
+  render();
+}
 loadResults();
 setInterval(updateRefreshCountdown, 1000);
 document.addEventListener('visibilitychange', () => {

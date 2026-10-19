@@ -37,7 +37,12 @@ function normalizeUrl(href) {
   try {
     const url = new URL(href, SOURCE_URL);
     if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) return null;
+    // PRC serves the same article from both the www and bare hostnames.
+    // Treat those aliases (and index.php/trailing-slash variants) as one result.
+    url.hostname = 'www.prc.gov.ph';
     if (url.pathname.startsWith('/index.php/article/')) url.pathname = url.pathname.slice('/index.php'.length);
+    if (url.pathname.startsWith('/article/')) url.pathname = url.pathname.replace(/\/+$/, '');
+    url.search = '';
     url.hash = '';
     return url.href;
   } catch {

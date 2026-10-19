@@ -2,11 +2,8 @@ require('./env').loadLocalEnv();
 
 const express = require('express');
 const fs = require('node:fs/promises');
-const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const fontkit = require('fontkit');
-const sharp = require('sharp');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const bundledResultSnapshot = require('./fallback-results.json');
 const bundledAnnouncementLinks = require('./fallback-announcement-links.json');
@@ -30,8 +27,8 @@ const app = express();
 const port = Number(process.env.PORT) || 3000;
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 const INITIAL_RESULTS_LIMIT = 12;
-const SHARE_FONT_REGULAR = fontkit.create(readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-400.woff2')));
-const SHARE_FONT_BOLD = fontkit.create(readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-700.woff2')));
+let sharp;
+let shareFonts;
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CACHE_KEY = 'boardexamtracker:results-cache:v1';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
@@ -205,10 +202,11 @@ async function normalizeBlogPhoto(dataUrl) {
   if (!match) throw new Error('Choose a JPG, PNG, or WebP photo.');
   const input = Buffer.from(match[1], 'base64');
   if (!input.length || input.length > BLOG_PHOTO_LIMIT_BYTES) throw new Error('The photo must be 1 MB or smaller after upload.');
-  const image = sharp(input, { limitInputPixels: 25_000_000 });
+  const imageProcessor = getSharp();
+  const image = imageProcessor(input, { limitInputPixels: 25_000_000 });
   const metadata = await image.metadata();
   if (!['jpeg', 'png', 'webp'].includes(metadata.format)) throw new Error('Choose a JPG, PNG, or WebP photo.');
-  const output = await sharp(input, { limitInputPixels: 25_000_000 })
+  const output = await imageProcessor(input, { limitInputPixels: 25_000_000 })
     .rotate()
     .resize({ width: 1600, height: 1200, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 82 })
@@ -822,7 +820,8 @@ function wrapSvgText(value, maxCharacters, maxLines) {
 }
 
 function svgText(value, { x, y, size, color, weight = 400, letterSpacing = 0 }) {
-  const font = weight >= 600 ? SHARE_FONT_BOLD : SHARE_FONT_REGULAR;
+  const fonts = getShareFonts();
+  const font = weight >= 600 ? fonts.bold : fonts.regular;
   const scale = size / font.unitsPerEm;
   const run = font.layout(String(value));
   let cursor = x;
@@ -833,6 +832,23 @@ function svgText(value, { x, y, size, color, weight = 400, letterSpacing = 0 }) 
     cursor += (position.xAdvance * scale) + letterSpacing;
     return `<path d="${glyph.path.toSVG()}" transform="translate(${glyphX.toFixed(2)} ${glyphY.toFixed(2)}) scale(${scale.toFixed(4)} -${scale.toFixed(4)})" fill="${color}"/>`;
   }).join('');
+}
+
+function getSharp() {
+  if (!sharp) sharp = require('sharp');
+  return sharp;
+}
+
+function getShareFonts() {
+  if (!shareFonts) {
+    const fontkit = require('fontkit');
+    const { readFileSync } = require('node:fs');
+    shareFonts = {
+      regular: fontkit.create(readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-400.woff2'))),
+      bold: fontkit.create(readFileSync(path.join(__dirname, '..', 'public', 'fonts', 'dm-sans-700.woff2'))),
+    };
+  }
+  return shareFonts;
 }
 
 function svgTextLines(lines, { x, y, size, lineHeight, color, weight = 400 }) {
@@ -954,7 +970,9 @@ app.all('/api/cron/check-results', async (req, res) => {
     try {
       const decoded = JSON.parse(saved);
       if (!Array.isArray(decoded) || decoded.some((url) => typeof url !== 'string')) throw new Error('Invalid notification baseline.');
-      knownUrls = new Set(decoded);
+      // Normalize the persisted baseline too; older checks may have saved
+      // the same PRC article under both www and bare-host aliases.
+      knownUrls = new Set(decoded.map((url) => normalizeUrl(url)).filter(Boolean));
     } catch {
       await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
       const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
@@ -975,7 +993,7 @@ app.all('/api/cron/check-results', async (req, res) => {
     await persistResultCache(cache.results, cache.fetchedAt);
     const delivery = newResults.length ? await notifySubscribers(newResults) : { recipients: 0, failed: 0 };
     if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
-    const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 500);
+    const mergedUrls = [...new Set([...latest.map((result) => normalizeUrl(result.url)), ...knownUrls].filter(Boolean))].slice(0, 500);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
     const announcementUrls = await missingAnnouncementUrls([...newResults, ...latest]);
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed, announcementUrls });
@@ -1142,7 +1160,7 @@ app.get('/api/result-card/:slug.png', async (req, res) => {
       description: String(req.query.summary || '').slice(0, 240),
     } : await findResultBySlug(slug);
     if (!result) return res.status(404).type('text/plain').send('Result not found.');
-    const png = await sharp(Buffer.from(createResultCardSvg(result))).png().toBuffer();
+    const png = await getSharp()(Buffer.from(createResultCardSvg(result))).png().toBuffer();
     return res.status(200).type('png').set('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800').send(png);
   } catch (error) {
     console.error('Could not generate result share image:', error.message);
