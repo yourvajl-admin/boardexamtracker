@@ -32,7 +32,9 @@ async function main() {
       throw new Error(`PRC was unreachable after retries. No results or email alerts were changed; the next scheduled run will retry. ${error.message}`);
     }
   }
-  const siteUrl = 'https://www.boardexamtracker.com/api/cron/check-results';
+  // Call Vercel's production alias directly so Cloudflare/proxy issues on the
+  // custom domain do not block publishing or email delivery.
+  const siteUrl = (process.env.SITE_CRON_URL || 'https://boardexamtracker.vercel.app/api/cron/check-results').replace(/\/$/, '');
   const response = await fetch(siteUrl, {
     method: 'POST',
     headers: {
@@ -66,7 +68,8 @@ async function main() {
     }
   }
   if (announcements.length) {
-    const cacheResponse = await fetch('https://www.boardexamtracker.com/api/cron/cache-announcement-links', {
+    const cacheUrl = siteUrl.replace(/\/check-results$/, '/cache-announcement-links');
+    const cacheResponse = await fetch(cacheUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${secret}`,
