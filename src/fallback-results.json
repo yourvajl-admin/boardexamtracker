@@ -1,7 +1,21 @@
 {
   "source": "https://www.prc.gov.ph/articles/exam-results",
-  "fetchedAt": "2026-10-12T09:09:27.156Z",
+  "fetchedAt": "2026-10-23T13:12:47.074Z",
   "results": [
+    {
+      "title": "October 2026 Professional Electronics Engineers Oral Examination/Technical Evaluation Results Released",
+      "category": "Electronics Engineering",
+      "date": "2026-10-23",
+      "description": "119 passed the Professional Electronics Engineers Oral Examination/Technical Evaluation. The examination was administered in N.C.R., Baguio, Cagayan de Oro, Cebu, Davao, Koronadal, Legazpi, and Singapore.",
+      "url": "https://www.prc.gov.ph/article/october-2026-professional-electronics-engineers-oral-examinationtechnical-evaluation"
+    },
+    {
+      "title": "October 2026 Electronics Engineers and Electronics Technicians Licensure Examinations Results Released in Four (4) Working Days",
+      "category": "Electronics Engineering",
+      "date": "2026-10-23",
+      "description": "1,106 of 2,337 passed the Electronics Engineers Licensure Examination and 1,804 of 2,057 passed the Electronics Technicians Licensure Examination. Results were released four working days after the examinations.",
+      "url": "https://www.prc.gov.ph/article/october-2026-electronics-engineers-and-electronics-technicians-licensure-examinations-0"
+    },
     {
       "title": "October 2026 Naval Architects Computer-Based Licensure Examination Results Released in Three (3) Working Days",
       "category": "Naval Architecture",
