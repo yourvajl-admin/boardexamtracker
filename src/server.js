@@ -882,10 +882,33 @@ function createResultCardSvg(item) {
 async function notifySubscribers(results) {
   const subscribers = await listConfirmedSubscribers();
   if (!subscribers.length) return { recipients: 0, failed: 0 };
-  const deliveries = await Promise.allSettled(subscribers.map((subscriber) => sendResultAlert(subscriber, results)));
-  const failures = deliveries.filter((delivery) => delivery.status === 'rejected').length;
-  if (failures) console.error(`Email delivery failed for ${failures} subscriber(s).`);
-  return { recipients: subscribers.length, failed: failures };
+  const failureStatuses = {};
+  let failures = 0;
+  for (const [index, subscriber] of subscribers.entries()) {
+    let delivered = false;
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await sendResultAlert(subscriber, results);
+        delivered = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        const status = /^Email provider returned (\d{3}):/.exec(error?.message || '')?.[1];
+        const retryable = !status || status === '408' || status === '429' || Number(status) >= 500;
+        if (!retryable || attempt === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+    if (!delivered) {
+      failures += 1;
+      const status = /^Email provider returned (\d{3}):/.exec(lastError?.message || '')?.[1] || 'network';
+      failureStatuses[status] = (failureStatuses[status] || 0) + 1;
+    }
+    if (index < subscribers.length - 1) await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  if (failures) console.error(`Email delivery failed for ${failures} subscriber(s): ${JSON.stringify(failureStatuses)}.`);
+  return { recipients: subscribers.length, failed: failures, failureStatuses };
 }
 
 async function sendResultAlert(subscriber, results, { resend = false } = {}) {
@@ -992,7 +1015,7 @@ app.all('/api/cron/check-results', async (req, res) => {
     const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
     await persistResultCache(cache.results, cache.fetchedAt);
     const delivery = newResults.length ? await notifySubscribers(newResults) : { recipients: 0, failed: 0 };
-    if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.' });
+    if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.', recipients: delivery.recipients, failed: delivery.failed, failureStatuses: delivery.failureStatuses });
     const mergedUrls = [...new Set([...latest.map((result) => normalizeUrl(result.url)), ...knownUrls].filter(Boolean))].slice(0, 500);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
     const announcementUrls = await missingAnnouncementUrls([...newResults, ...latest]);
