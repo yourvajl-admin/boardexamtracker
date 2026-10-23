@@ -144,7 +144,9 @@ async function publishCheck(env) {
     .sort((a, b) => b.date.localeCompare(a.date));
   if (!results.length) throw new Error('No dated result announcements were parsed from PRC.');
 
-  const siteUrl = (env.SITE_CRON_URL || 'https://www.boardexamtracker.com/api/cron/check-results').replace(/\/$/, '');
+  // Call the Vercel deployment hostname directly. The custom domain can be
+  // proxied through Cloudflare and return a 502 even while the app is healthy.
+  const siteUrl = (env.SITE_CRON_URL || 'https://boardexamtracker.vercel.app/api/cron/check-results').replace(/\/$/, '');
   // Publish and notify immediately when the official feed identifies a new
   // result. Document indexing follows and retries on the next five-minute run.
   const response = await fetch(siteUrl, {
