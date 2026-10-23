@@ -2,6 +2,12 @@ name: Manual PRC exam result check
 
 on:
   workflow_dispatch:
+    inputs:
+      verified_result_urls:
+        description: 'Optional JSON array of already verified PRC result article URLs'
+        required: false
+        default: '[]'
+        type: string
 
 permissions: {}
 
@@ -19,6 +25,7 @@ jobs:
       - name: Check official PRC feed and send new-result alerts
         env:
           CRON_SECRET: ${{ secrets.BOARD_EXAMTRACKER_CRON_SECRET }}
+          VERIFIED_RESULT_URLS: ${{ inputs.verified_result_urls }}
         run: |
           if [ -z "$CRON_SECRET" ]; then
             echo "Missing repository secret BOARD_EXAMTRACKER_CRON_SECRET" >&2

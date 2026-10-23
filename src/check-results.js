@@ -7,13 +7,30 @@ async function main() {
   // Fetch from the GitHub runner, then hand the official-source data to the
   // production API. This avoids depending on Vercel outbound access to PRC.
   let results;
-  try {
-    results = await fetchResults({ maxPage: 2 });
-  } catch (error) {
-    // A PRC connection failure is not an empty feed. Fail this run so the
-    // outage is visible; the next scheduled run will retry without changing
-    // the baseline or sending alerts from partial data.
-    throw new Error(`PRC was unreachable after retries. No results or email alerts were changed; the next scheduled run will retry. ${error.message}`);
+  const verifiedResultUrls = process.env.VERIFIED_RESULT_URLS;
+  if (verifiedResultUrls && verifiedResultUrls !== '[]') {
+    let requestedUrls;
+    try {
+      requestedUrls = JSON.parse(verifiedResultUrls);
+    } catch {
+      throw new Error('VERIFIED_RESULT_URLS must be a JSON array of official PRC article URLs.');
+    }
+    if (!Array.isArray(requestedUrls) || !requestedUrls.length || requestedUrls.length > 10 || requestedUrls.some((url) => typeof url !== 'string' || !/^https:\/\/www\.prc\.gov\.ph\/article\/[a-z0-9-]+$/i.test(url))) {
+      throw new Error('Provide one to ten exact official PRC article URLs.');
+    }
+    const snapshot = require('./fallback-results.json').results;
+    const requested = new Set(requestedUrls);
+    results = snapshot.filter((result) => requested.has(result.url));
+    if (results.length !== requested.size) throw new Error('One or more requested URLs are not present in the verified result snapshot.');
+  } else {
+    try {
+      results = await fetchResults({ maxPage: 2 });
+    } catch (error) {
+      // A PRC connection failure is not an empty feed. Fail this run so the
+      // outage is visible; the next scheduled run will retry without changing
+      // the baseline or sending alerts from partial data.
+      throw new Error(`PRC was unreachable after retries. No results or email alerts were changed; the next scheduled run will retry. ${error.message}`);
+    }
   }
   const siteUrl = 'https://www.boardexamtracker.com/api/cron/check-results';
   const response = await fetch(siteUrl, {
