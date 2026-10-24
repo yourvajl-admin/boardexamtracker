@@ -209,8 +209,12 @@ async function fetchPrcArticle(articleUrl) {
 }
 
 export default {
-  async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(publishCheck(env));
+  async scheduled(controller, env, ctx) {
+    const startedAt = Date.now();
+    console.log(JSON.stringify({ event: 'scheduled_check_started', cron: controller.cron, scheduledTime: controller.scheduledTime }));
+    ctx.waitUntil(publishCheck(env)
+      .then(() => console.log(JSON.stringify({ event: 'scheduled_check_finished', durationMs: Date.now() - startedAt })))
+      .catch((error) => console.error(JSON.stringify({ event: 'scheduled_check_failed', durationMs: Date.now() - startedAt, error: error.message }))));
   },
   async fetch() {
     return new Response('PRC result checker is online. Scheduled checks run every five minutes.', {
