@@ -1,6 +1,8 @@
-name: Manual PRC exam result check
+name: Automatic PRC exam result check
 
 on:
+  schedule:
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       verified_result_urls:
