@@ -263,7 +263,7 @@ async function loadResults(refresh = false) {
     }
     try { localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify({ results: state.results.slice(0, PAGE_SIZE) })); } catch { /* Storage is optional. */ }
     renderProfessionFilter(data.professions);
-    updated.textContent = `Last updated: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
+    updated.textContent = `Last checked: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
     setNotice(data.stale ? 'Showing the latest cached results.' : data.warning || '');
     renderProfessionCards();
     render();

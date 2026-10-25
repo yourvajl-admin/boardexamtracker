@@ -3,5 +3,11 @@ main = "prc-checker.js"
 compatibility_date = "2026-10-13"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+RECENT_PAGES_PER_CHECK = "3"
+HISTORICAL_PAGES_PER_CHECK = "2"
+PRC_PAGE_DELAY_MS = "350"
+SITE_CRON_URL = "https://www.boardexamtracker.com/api/cron/check-results"
+
 [triggers]
 crons = ["*/5 * * * *"]

@@ -9,6 +9,9 @@ const latestAlertForm = document.querySelector('#latest-alert-form');
 const latestAlertStatus = document.querySelector('#latest-alert-status');
 const adsToggleButton = document.querySelector('#ads-toggle-button');
 const adsControlStatus = document.querySelector('#ads-control-status');
+const checkerStatus = document.querySelector('#checker-control-status');
+const checkerDetails = document.querySelector('#checker-control-details');
+const checkerRunButton = document.querySelector('#checker-run-button');
 const blogPostList = document.querySelector('#admin-blog-posts');
 const blogAdminStatus = document.querySelector('#blog-admin-status');
 const blogPostDialog = document.querySelector('#blog-post-dialog');
@@ -24,6 +27,7 @@ let blogPosts = [];
 let editingBlogPost = null;
 let removeExistingBlogPhoto = false;
 let blogPhotoObjectUrl = null;
+let checkerRefreshTimer = null;
 
 function showView(id) {
   views.forEach((viewId) => { document.getElementById(viewId).hidden = viewId !== id; });
@@ -142,6 +146,51 @@ async function refreshViewerCount() {
     label.textContent = error.message;
   }
 }
+
+function displayCheckDate(value) {
+  if (!value) return 'Not recorded yet';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Not recorded yet' : new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+async function loadCheckerStatus() {
+  try {
+    const data = await request('/api/admin/results-check');
+    const lastSuccessTime = Date.parse(data.lastSuccessAt || '');
+    const overStaleLimit = Number.isFinite(lastSuccessTime) && Date.now() - lastSuccessTime > 15 * 60 * 1000;
+    checkerStatus.textContent = data.state === 'healthy' && overStaleLimit
+      ? 'The last recorded PRC check succeeded, but no recent check has completed. Review the attempt time and Worker logs.'
+      : data.state === 'healthy'
+      ? 'Online checker is running. PRC announcements are published to the results list automatically.'
+      : data.state === 'running' ? 'A PRC check is currently running.'
+        : data.state === 'error' ? `Most recent check failed: ${data.lastError || 'See server logs.'}`
+          : 'No successful online PRC check has been recorded yet.';
+    checkerStatus.dataset.state = data.state || 'unknown';
+    checkerDetails.textContent = `Last attempt: ${displayCheckDate(data.lastAttemptAt)} · Last success: ${displayCheckDate(data.lastSuccessAt)} · ${data.lastResultCount || 0} announcements checked · ${data.lastPublishedCount || 0} new result(s) published`;
+    checkerDetails.title = data.source || '';
+  } catch (error) {
+    checkerStatus.textContent = error.message;
+    checkerStatus.dataset.state = 'error';
+    checkerDetails.textContent = '';
+  }
+}
+
+checkerRunButton.addEventListener('click', async () => {
+  checkerRunButton.disabled = true;
+  checkerRunButton.textContent = 'Starting…';
+  checkerStatus.textContent = 'Requesting an immediate check from the online Cloudflare Worker…';
+  try {
+    const data = await request('/api/admin/results-check', { method: 'POST' });
+    checkerStatus.textContent = data.skipped ? data.reason : 'Online check started. This panel will update when it finishes.';
+    await loadCheckerStatus();
+  } catch (error) {
+    checkerStatus.textContent = error.message;
+    checkerStatus.dataset.state = 'error';
+  } finally {
+    checkerRunButton.disabled = false;
+    checkerRunButton.textContent = 'Check PRC now';
+  }
+});
 
 function renderAdsControl(data) {
   adsToggleButton.setAttribute('aria-pressed', String(data.enabled));
@@ -388,13 +437,17 @@ async function loadDashboard() {
     renderSubscribers();
     if (!data.persistentStorage && data.production) {
       setDashboardStatus('Persistent subscriber storage is not connected. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel to reliably store and manage subscribers.', 'bad');
+    } else if (data.migration?.imported > 0) {
+      setDashboardStatus(`Restored ${data.migration.imported} subscriber${data.migration.imported === 1 ? '' : 's'} from the previous Redis database. The original records were kept, and no emails were sent.`, 'good');
     } else {
       setDashboardStatus('Only admins can see this list. A manual unsubscribe removes the address from future alerts.', 'good');
     }
     await loadAdsControl();
+    await loadCheckerStatus();
     await refreshViewerCount();
     await loadAdminBlogPosts();
     if (!viewerRefreshTimer) viewerRefreshTimer = setInterval(refreshViewerCount, 15_000);
+    if (!checkerRefreshTimer) checkerRefreshTimer = setInterval(loadCheckerStatus, 15_000);
   } catch (error) {
     if (error.message.includes('Admin sign-in required')) showView('login-view');
     else setDashboardStatus(error.message, 'bad');
@@ -463,6 +516,8 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
   try { await request('/api/admin/logout', { method: 'POST' }); } catch { /* Signing out still returns to the login screen. */ }
   if (viewerRefreshTimer) clearInterval(viewerRefreshTimer);
   viewerRefreshTimer = null;
+  if (checkerRefreshTimer) clearInterval(checkerRefreshTimer);
+  checkerRefreshTimer = null;
   showView('login-view');
 });
 

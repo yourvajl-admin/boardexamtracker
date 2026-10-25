@@ -11,12 +11,15 @@ const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
 const { adminConfig, authenticate, clearSessionCookie, createSession, isAuthenticated, setSessionCookie } = require('./admin-auth');
 const { getActiveViewerCount, recordViewerHeartbeat } = require('./viewers');
+const { announcementKey, attachAnnouncementDocuments, canonicalArticleUrl, loadPublishedAnnouncements, upsertAnnouncement } = require('./announcement-store');
+const { sendUndeliveredResultAlert } = require('./result-alert-delivery');
 const {
   addPendingSubscriber,
   confirmSubscriber,
   isPersistentStorageConfigured,
   listConfirmedSubscribers,
   listSubscribersForAdmin,
+  migrateLegacySubscribers,
   markConfirmationSent,
   removeSubscriber,
   removeSubscriberByEmail,
@@ -32,11 +35,12 @@ let shareFonts;
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
 const RESULTS_CACHE_KEY = 'boardexamtracker:results-cache:v1';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
+const RESULTS_CHECK_STATUS_KEY = 'boardexamtracker:results-check-status:v1';
+const RESULTS_SCAN_CURSOR_KEY = 'boardexamtracker:results-scan-cursor:v1';
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
 const BLOG_POSTS_KEY = 'boardexamtracker:blog:posts';
 const BLOG_POST_INDEX_KEY = 'boardexamtracker:blog:index';
 const BLOG_POST_IMAGE_KEY_PREFIX = 'boardexamtracker:blog:image:';
-const BLOG_POSTS_FILE = path.join(__dirname, '..', 'data', 'blog-posts.json');
 const BLOG_POST_LIMIT = 100;
 const BLOG_PHOTO_LIMIT_BYTES = 1_000_000;
 const ANNOUNCEMENT_CACHE_KEY_PREFIX = 'boardexamtracker:announcement-links:v1:';
@@ -44,14 +48,12 @@ let pendingFetch = null;
 let pendingArchiveFetch = null;
 let archiveCacheLoaded = false;
 const announcementCache = new Map();
-let localAdsEnabled = null;
 let recentResultIndex = null;
 let recentResultIndexFetchedAt = 0;
 let recentResultIndexPromise = null;
 let fullResultIndex = null;
 let fullResultIndexFetchedAt = 0;
 let fullResultIndexPromise = null;
-let localBlogPosts = null;
 
 function announcementCacheKey(articleUrl) {
   return `${ANNOUNCEMENT_CACHE_KEY_PREFIX}${Buffer.from(articleUrl).toString('base64url')}`;
@@ -85,7 +87,7 @@ async function getCachedAnnouncement(articleUrl) {
 async function saveAnnouncementCache(articleUrl, value) {
   const cached = { ...value, fetchedAt: Date.now() };
   announcementCache.set(articleUrl, cached);
-  if (!isPersistentStorageConfigured()) return process.env.NODE_ENV !== 'production';
+  if (!isPersistentStorageConfigured()) return false;
   try {
     const ttl = cached.resources?.length ? 60 * 60 * 24 * 30 : 60 * 60 * 6;
     await redisCommand('SET', announcementCacheKey(articleUrl), JSON.stringify(cached), 'EX', ttl);
@@ -117,49 +119,25 @@ function restoreBundledResultCache() {
   return setCache(mergeResultLists(cached?.results || [], results), fetchedAt);
 }
 
-async function readLocalBlogPosts() {
-  if (localBlogPosts) return localBlogPosts;
-  try {
-    const stored = JSON.parse(await fs.readFile(BLOG_POSTS_FILE, 'utf8'));
-    localBlogPosts = Array.isArray(stored) ? stored : [];
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    localBlogPosts = [];
-  }
-  return localBlogPosts;
-}
-
 function publicBlogPost(post) {
   const { imageData, ...fields } = post;
   return { ...fields, imageUrl: post.hasImage ? `/api/blog/posts/${encodeURIComponent(post.id)}/image?v=${post.updatedAt}` : null };
 }
 
 async function listBlogPosts(offset = 0, limit = BLOG_POST_LIMIT) {
-  if (isPersistentStorageConfigured()) {
-    const ids = await redisCommand('ZREVRANGE', BLOG_POST_INDEX_KEY, String(offset), String(offset + limit - 1));
-    if (!Array.isArray(ids) || !ids.length) return [];
-    const values = await redisCommand('HMGET', BLOG_POSTS_KEY, ...ids);
-    return (Array.isArray(values) ? values : []).flatMap((value) => {
-      if (typeof value !== 'string') return [];
-      try { return [publicBlogPost(JSON.parse(value))]; } catch { return []; }
-    });
-  }
-  if (process.env.NODE_ENV === 'production') throw new Error('Persistent blog storage is not configured.');
-  return (await readLocalBlogPosts())
-    .slice()
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(offset, offset + limit)
-    .map(publicBlogPost);
+  const ids = await redisCommand('ZREVRANGE', BLOG_POST_INDEX_KEY, String(offset), String(offset + limit - 1));
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const values = await redisCommand('HMGET', BLOG_POSTS_KEY, ...ids);
+  return (Array.isArray(values) ? values : []).flatMap((value) => {
+    if (typeof value !== 'string') return [];
+    try { return [publicBlogPost(JSON.parse(value))]; } catch { return []; }
+  });
 }
 
 async function getBlogPostById(id) {
-  if (isPersistentStorageConfigured()) {
-    const value = await redisCommand('HGET', BLOG_POSTS_KEY, id);
-    if (typeof value !== 'string') return null;
-    try { return JSON.parse(value); } catch { return null; }
-  }
-  if (process.env.NODE_ENV === 'production') throw new Error('Persistent blog storage is not configured.');
-  return (await readLocalBlogPosts()).find((post) => post.id === id) || null;
+  const value = await redisCommand('HGET', BLOG_POSTS_KEY, id);
+  if (typeof value !== 'string') return null;
+  try { return JSON.parse(value); } catch { return null; }
 }
 
 async function saveBlogPost(post, imageData) {
@@ -171,28 +149,14 @@ async function saveBlogPost(post, imageData) {
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
   };
-  if (isPersistentStorageConfigured()) {
-    const imageKey = `${BLOG_POST_IMAGE_KEY_PREFIX}${post.id}`;
-    if (imageData !== undefined) {
-      if (imageData) await redisCommand('SET', imageKey, imageData);
-      else await redisCommand('DEL', imageKey);
-    }
-    await redisCommand('HSET', BLOG_POSTS_KEY, post.id, JSON.stringify(metadata));
-    await redisCommand('ZADD', BLOG_POST_INDEX_KEY, String(post.updatedAt), post.id);
-    return metadata;
+  const imageKey = `${BLOG_POST_IMAGE_KEY_PREFIX}${post.id}`;
+  if (imageData !== undefined) {
+    if (imageData) await redisCommand('SET', imageKey, imageData);
+    else await redisCommand('DEL', imageKey);
   }
-  if (process.env.NODE_ENV === 'production') throw new Error('Persistent blog storage is not configured.');
-  const posts = await readLocalBlogPosts();
-  const index = posts.findIndex((item) => item.id === post.id);
-  const existing = index >= 0 ? posts[index] : null;
-  const stored = { ...metadata, imageData: imageData === undefined ? existing?.imageData || null : imageData };
-  if (index >= 0) posts[index] = stored;
-  else posts.unshift(stored);
-  const temporary = `${BLOG_POSTS_FILE}.${process.pid}.tmp`;
-  await fs.mkdir(path.dirname(BLOG_POSTS_FILE), { recursive: true });
-  await fs.writeFile(temporary, JSON.stringify(posts), { mode: 0o600 });
-  await fs.rename(temporary, BLOG_POSTS_FILE);
-  return stored;
+  await redisCommand('HSET', BLOG_POSTS_KEY, post.id, JSON.stringify(metadata));
+  await redisCommand('ZADD', BLOG_POST_INDEX_KEY, String(post.updatedAt), post.id);
+  return metadata;
 }
 
 async function normalizeBlogPhoto(dataUrl) {
@@ -216,15 +180,15 @@ async function normalizeBlogPhoto(dataUrl) {
 }
 
 function blogStorageReady(res) {
-  if (process.env.NODE_ENV !== 'production' || isPersistentStorageConfigured()) return true;
-  res.status(503).json({ error: 'Shared Redis storage is required to publish and manage blog posts in production.' });
+  if (isPersistentStorageConfigured()) return true;
+  res.status(503).json({ error: 'Configure Upstash Redis REST credentials to publish and manage blog posts.' });
   return false;
 }
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
-  const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links'].includes(req.path);
+  const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links', '/api/cron/check-status'].includes(req.path);
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
   const limit = isCronPayload ? '1mb' : isBlogWrite ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
@@ -294,13 +258,12 @@ function adsenseConfigBase() {
 
 async function getAdSenseConfig() {
   const base = adsenseConfigBase();
-  let enabled = localAdsEnabled ?? base.defaultEnabled;
+  let enabled = base.defaultEnabled;
   try {
-    if (isPersistentStorageConfigured()) {
+    if (!isPersistentStorageConfigured()) enabled = false;
+    else {
       const saved = await redisCommand('GET', ADSENSE_ENABLED_KEY);
       if (saved === 'true' || saved === 'false') enabled = saved === 'true';
-    } else if (process.env.NODE_ENV === 'production') {
-      enabled = false;
     }
   } catch (error) {
     console.error('Could not load AdSense display setting:', error.message);
@@ -356,17 +319,14 @@ app.post('/api/admin/ads', requireAdmin, async (req, res) => {
   if (req.body.enabled && !base.configured) {
     return res.status(503).json({ error: 'Ads cannot be turned on until the AdSense publisher ID and display ad slot ID are configured for production.' });
   }
-  if (isPersistentStorageConfigured()) {
-    try {
-      await redisCommand('SET', ADSENSE_ENABLED_KEY, String(req.body.enabled));
-    } catch (error) {
-      console.error('Could not save AdSense display setting:', error.message);
-      return res.status(503).json({ error: 'Could not save the ads setting. Check the shared storage connection and try again.' });
-    }
-  } else if (process.env.NODE_ENV === 'production') {
-    return res.status(503).json({ error: 'Shared Upstash Redis storage is required to persist the ads setting in production.' });
-  } else {
-    localAdsEnabled = req.body.enabled;
+  if (!isPersistentStorageConfigured()) {
+    return res.status(503).json({ error: 'Configure Upstash Redis REST credentials to save the ads setting.' });
+  }
+  try {
+    await redisCommand('SET', ADSENSE_ENABLED_KEY, String(req.body.enabled));
+  } catch (error) {
+    console.error('Could not save AdSense display setting:', error.message);
+    return res.status(503).json({ error: 'Could not save the ads setting. Check the Upstash Redis REST connection and try again.' });
   }
   return res.json({ enabled: req.body.enabled });
 });
@@ -387,8 +347,9 @@ app.post('/api/admin/logout', (req, res) => {
 });
 app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
   try {
+    const migration = await migrateLegacySubscribers();
     const subscribers = await listSubscribersForAdmin();
-    return res.json({ subscribers, persistentStorage: isPersistentStorageConfigured(), production: process.env.NODE_ENV === 'production' });
+    return res.json({ subscribers, migration, persistentStorage: isPersistentStorageConfigured(), production: process.env.NODE_ENV === 'production' });
   } catch (error) {
     console.error('Could not load admin subscriber list:', error.message);
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
@@ -411,7 +372,6 @@ app.get('/api/blog/posts/:id/image', async (req, res) => {
   try {
     let imageData;
     if (isPersistentStorageConfigured()) imageData = await redisCommand('GET', `${BLOG_POST_IMAGE_KEY_PREFIX}${id}`);
-    else if (process.env.NODE_ENV !== 'production') imageData = (await getBlogPostById(id))?.imageData;
     if (typeof imageData !== 'string' || !imageData) return res.status(404).end();
     res.set({ 'Content-Type': 'image/webp', 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
     return res.send(Buffer.from(imageData, 'base64'));
@@ -491,16 +451,9 @@ app.delete('/api/admin/blog/posts/:id', requireAdmin, async (req, res) => {
   try {
     const existing = await getBlogPostById(id);
     if (!existing) return res.status(404).json({ error: 'Post not found.' });
-    if (isPersistentStorageConfigured()) {
-      await redisCommand('HDEL', BLOG_POSTS_KEY, id);
-      await redisCommand('ZREM', BLOG_POST_INDEX_KEY, id);
-      await redisCommand('DEL', `${BLOG_POST_IMAGE_KEY_PREFIX}${id}`);
-    } else {
-      localBlogPosts = (await readLocalBlogPosts()).filter((post) => post.id !== id);
-      const temporary = `${BLOG_POSTS_FILE}.${process.pid}.tmp`;
-      await fs.writeFile(temporary, JSON.stringify(localBlogPosts), { mode: 0o600 });
-      await fs.rename(temporary, BLOG_POSTS_FILE);
-    }
+    await redisCommand('HDEL', BLOG_POSTS_KEY, id);
+    await redisCommand('ZREM', BLOG_POST_INDEX_KEY, id);
+    await redisCommand('DEL', `${BLOG_POST_IMAGE_KEY_PREFIX}${id}`);
     return res.json({ deleted: true });
   } catch (error) {
     console.error('Could not delete blog post:', error.message);
@@ -563,8 +516,8 @@ app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) =
     return res.status(400).json({ error: 'Enter a valid subscriber email.' });
   }
   if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
-  if (process.env.NODE_ENV === 'production' && !isPersistentStorageConfigured()) {
-    return res.status(503).json({ error: 'Persistent subscriber storage is required to resend alerts.' });
+  if (!isPersistentStorageConfigured()) {
+    return res.status(503).json({ error: 'Configure Upstash Redis REST credentials to resend alerts.' });
   }
 
   try {
@@ -597,8 +550,8 @@ app.post('/api/admin/subscribers/unsubscribe', requireAdmin, async (req, res) =>
   if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
     return res.status(400).json({ error: 'Enter a valid subscriber email.' });
   }
-  if (process.env.NODE_ENV === 'production' && !isPersistentStorageConfigured()) {
-    return res.status(503).json({ error: 'Persistent subscriber storage is required for admin changes in production.' });
+  if (!isPersistentStorageConfigured()) {
+    return res.status(503).json({ error: 'Configure Upstash Redis REST credentials for subscriber management.' });
   }
   try {
     const removed = await removeSubscriberByEmail(email);
@@ -656,10 +609,13 @@ async function restorePersistentResultCache() {
   if (getCache() || !isPersistentStorageConfigured()) return getCache();
   try {
     const saved = await redisCommand('GET', RESULTS_CACHE_KEY);
-    if (typeof saved !== 'string') return null;
-    const snapshot = JSON.parse(saved);
-    if (!Array.isArray(snapshot.results) || !snapshot.results.length) return null;
-    const results = mergeResultLists(snapshot.results);
+    let snapshot = {};
+    if (typeof saved === 'string') {
+      try { snapshot = JSON.parse(saved); } catch { snapshot = {}; }
+    }
+    const indexedAnnouncements = await loadPublishedAnnouncements(redisCommand);
+    const snapshotResults = Array.isArray(snapshot.results) ? snapshot.results : [];
+    const results = mergeResultLists(snapshotResults, indexedAnnouncements);
     if (!results.length) return null;
     const fetchedAt = Number.isFinite(snapshot.fetchedAt) ? snapshot.fetchedAt : Date.now();
     const restored = setCache(results, fetchedAt);
@@ -885,22 +841,12 @@ async function notifySubscribers(results) {
   const failureStatuses = {};
   let failures = 0;
   for (const [index, subscriber] of subscribers.entries()) {
-    let delivered = false;
-    let lastError;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        await sendResultAlert(subscriber, results);
-        delivered = true;
-        break;
-      } catch (error) {
-        lastError = error;
-        const status = /^Email provider returned (\d{3}):/.exec(error?.message || '')?.[1];
-        const retryable = !status || status === '408' || status === '429' || Number(status) >= 500;
-        if (!retryable || attempt === 2) break;
-        await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-      }
-    }
-    if (!delivered) {
+    try {
+      await sendUndeliveredResultAlert(subscriber, results, {
+        redisCommand,
+        send: (target, items, options) => sendResultAlert(target, items, options),
+      });
+    } catch (lastError) {
       failures += 1;
       const status = /^Email provider returned (\d{3}):/.exec(lastError?.message || '')?.[1] || 'network';
       failureStatuses[status] = (failureStatuses[status] || 0) + 1;
@@ -911,7 +857,7 @@ async function notifySubscribers(results) {
   return { recipients: subscribers.length, failed: failures, failureStatuses };
 }
 
-async function sendResultAlert(subscriber, results, { resend = false } = {}) {
+async function sendResultAlert(subscriber, results, { resend = false, idempotencyKey } = {}) {
   const baseUrl = publicBaseUrl();
   const itemHtml = results.slice(0, 30).map((result) => `<li><a href="${escapeEmailHtml(boardResultPageUrl(baseUrl, result))}">${escapeEmailHtml(result.title)}</a> <span>— ${escapeEmailHtml(result.date)}</span></li>`).join('');
   const itemText = results.slice(0, 30).map((result) => `- ${result.title} (${result.date})\n  ${boardResultPageUrl(baseUrl, result)}`).join('\n');
@@ -927,6 +873,7 @@ async function sendResultAlert(subscriber, results, { resend = false } = {}) {
     subject: resend ? `Reminder: latest board exam result on BoardExamTracker` : `${results.length} new PRC exam ${results.length === 1 ? 'result' : 'results'} on BoardExamTracker`,
     html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">${escapeEmailHtml(heading)}</h1><p>${escapeEmailHtml(intro)}</p><ul>${itemHtml}</ul><p><a href="${escapeEmailHtml(baseUrl)}">View BoardExamTracker</a></p><hr><p style="font-size:12px;color:#718097">Independent tracker; not affiliated with PRC.${unsubscribeUrl ? ` <a href="${escapeEmailHtml(unsubscribeUrl)}">Unsubscribe from these emails</a>.` : ''}</p></div>`,
     text: `${heading}\n\n${intro}\n\n${itemText}${unsubscribeUrl ? `\n\nUnsubscribe: ${unsubscribeUrl}` : ''}`,
+    idempotencyKey,
   });
 }
 
@@ -951,78 +898,206 @@ function allowEmailAttempt(req) {
 
 app.get('/api/notifications/status', (_req, res) => {
   const emailReady = isEmailConfigured();
-  const persistentStorageReady = process.env.NODE_ENV !== 'production' || isPersistentStorageConfigured();
+  const persistentStorageReady = isPersistentStorageConfigured();
   res.json({
     available: emailReady && persistentStorageReady,
     reason: !emailReady ? 'email' : !persistentStorageReady ? 'storage' : null,
   });
 });
 
-app.all('/api/cron/check-results', async (req, res) => {
+async function loadResultsCheckStatus() {
+  try {
+    const value = await redisCommand('GET', RESULTS_CHECK_STATUS_KEY);
+    return typeof value === 'string' ? JSON.parse(value) : {};
+  } catch { return {}; }
+}
+
+async function saveResultsCheckStatus(patch) {
+  const previous = await loadResultsCheckStatus();
+  const next = { ...previous, ...patch };
+  await redisCommand('SET', RESULTS_CHECK_STATUS_KEY, JSON.stringify(next), 'EX', 60 * 60 * 24 * 90);
+  return next;
+}
+
+app.all('/api/cron/check-status', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) {
-    return res.status(401).json({ error: 'Unauthorized.' });
+  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
+  if (!isPersistentStorageConfigured()) return res.status(503).json({ error: 'Persistent result tracking is not configured.' });
+  try {
+    const action = req.body?.action || req.query.action;
+    if (action === 'acquire') {
+      const lockToken = randomUUID();
+      const acquired = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, lockToken, 'NX', 'EX', 240);
+      if (acquired !== 'OK') return res.status(409).json({ acquired: false, reason: 'A result check is already running.' });
+      return res.json({ acquired: true, lockToken });
+    }
+    if (action === 'release') {
+      const lockToken = typeof req.body?.lockToken === 'string' ? req.body.lockToken : '';
+      if (lockToken && await redisCommand('GET', RESULTS_CHECK_LOCK_KEY) === lockToken) await redisCommand('DEL', RESULTS_CHECK_LOCK_KEY);
+      return res.json({ released: true });
+    }
+    if (action === 'scan-state') {
+      if (req.method === 'GET') {
+        const cursor = Number(await redisCommand('GET', RESULTS_SCAN_CURSOR_KEY)) || 3;
+        return res.json({ cursor });
+      }
+      const cursor = Number(req.body?.cursor);
+      if (!Number.isInteger(cursor) || cursor < 3 || cursor > 10000) return res.status(400).json({ error: 'Invalid page cursor.' });
+      await redisCommand('SET', RESULTS_SCAN_CURSOR_KEY, String(cursor), 'EX', 60 * 60 * 24 * 365);
+      return res.json({ saved: true, cursor });
+    }
+    if (!['started', 'success', 'failure'].includes(action)) return res.status(400).json({ error: 'Invalid checker status action.' });
+    const now = new Date().toISOString();
+    const patch = { state: action === 'started' ? 'running' : action === 'success' ? 'healthy' : 'error', lastAttemptAt: now };
+    if (action === 'success') Object.assign(patch, {
+      lastSuccessAt: now,
+      lastError: null,
+      lastResultCount: Number(req.body?.resultCount) || 0,
+      lastPublishedCount: Number(req.body?.newResults) || 0,
+      lastPageCount: Number(req.body?.pageCount) || 0,
+    });
+    if (action === 'failure') patch.lastError = String(req.body?.error || 'The automatic PRC check failed.').replace(/[\r\n\t]+/g, ' ').slice(0, 1200);
+    return res.json({ status: await saveResultsCheckStatus(patch) });
+  } catch (error) {
+    console.error('Could not update PRC checker status:', error.message);
+    return res.status(503).json({ error: 'Could not update PRC checker state.' });
   }
+});
+
+app.post('/api/cron/check-results', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
   if (!isPersistentStorageConfigured()) return res.status(503).json({ error: 'Persistent result tracking is not configured.' });
 
+  let ownedLockToken = '';
   try {
-    const lock = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, randomUUID(), 'NX', 'EX', 240);
-    if (lock !== 'OK') return res.json({ skipped: true, reason: 'A result check is already running.' });
+    const externalLockToken = typeof req.body?.lockToken === 'string' ? req.body.lockToken : '';
+    if (externalLockToken) {
+      if (await redisCommand('GET', RESULTS_CHECK_LOCK_KEY) !== externalLockToken) return res.status(409).json({ skipped: true, reason: 'The scheduled-check lock expired.' });
+    } else {
+      ownedLockToken = randomUUID();
+      const lock = await redisCommand('SET', RESULTS_CHECK_LOCK_KEY, ownedLockToken, 'NX', 'EX', 240);
+      if (lock !== 'OK') return res.json({ skipped: true, reason: 'A result check is already running.' });
+    }
     await restorePersistentResultCache();
     restoreBundledResultCache();
 
-    const sourceResults = Array.isArray(req.body?.results)
-      ? req.body.results
-      : await fetchResults({ maxPage: 2 });
-    const latest = sourceResults
-      .filter((result) => result?.title && result?.date && normalizeUrl(result.url))
-      .sort((a, b) => b.date.localeCompare(a.date));
-    if (!latest.length) return res.status(502).json({ error: 'No results could be read from the official PRC page.' });
+    const usingFallbackSnapshot = req.body?.fallback === true;
+    const sourceResults = Array.isArray(req.body?.results) ? req.body.results : await fetchResults({ maxPage: 2 });
+    const validateAnnouncement = require('./announcement-store').validateAnnouncement;
+    const latest = [];
+    const records = [];
+    for (const sourceResult of sourceResults) {
+      const checked = validateAnnouncement(sourceResult);
+      if (checked.valid) latest.push({ ...checked.announcement });
+      else {
+        const pending = await upsertAnnouncement(sourceResult, redisCommand);
+        if (pending.record) records.push(pending);
+      }
+    }
+    latest.sort((a, b) => b.date.localeCompare(a.date));
+    if (!latest.length) throw new Error('No validated, dated result announcements could be read from the official PRC page.');
     if (req.body?.archiveLoaded === true) archiveCacheLoaded = true;
 
+    let knownUrls = new Set();
+    let initialized = false;
     const saved = await redisCommand('GET', KNOWN_RESULTS_KEY);
-    if (typeof saved !== 'string') {
-      await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
+    initialized = typeof saved !== 'string';
+    if (typeof saved === 'string') {
+      try {
+        const decoded = JSON.parse(saved);
+        if (!Array.isArray(decoded)) throw new Error('Invalid notification baseline.');
+        knownUrls = new Set(decoded.map((url) => normalizeUrl(url)).filter(Boolean));
+      } catch { knownUrls = new Set(); initialized = true; }
+    }
+    for (const result of latest) records.push(await upsertAnnouncement(result, redisCommand));
+    if (usingFallbackSnapshot) {
+      for (const { record } of records) {
+        if (!record) continue;
+        record.notificationStatus = 'not-required';
+        await redisCommand('SET', announcementKey(record.canonicalUrl), JSON.stringify(record));
+      }
+      const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 5000);
+      await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
       const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
-      await persistResultCache(cache.results, cache.fetchedAt);
+      await persistResultCache(cache.results, cache.fetchedAt, archiveCacheLoaded);
+      await saveResultsCheckStatus({
+        state: 'error',
+        lastAttemptAt: new Date().toISOString(),
+        lastError: 'PRC live fetch failed in the scheduled runner; the verified fallback snapshot was published without new-result alerts.',
+        lastResultCount: latest.length,
+        lastPublishedCount: 0,
+        lastPageCount: Number(req.body?.pages) || 0,
+      });
+      return res.json({ initialized: false, fallback: true, newResults: 0, recipients: 0, failed: 0, announcementUrls: [] });
+    }
+    if (initialized) {
+      for (const { record } of records) {
+        record.notificationStatus = 'not-required';
+        await redisCommand('SET', announcementKey(record.canonicalUrl), JSON.stringify(record));
+      }
+      await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 5000)));
+      const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
+      await persistResultCache(cache.results, cache.fetchedAt, archiveCacheLoaded);
       const announcementUrls = await missingAnnouncementUrls(latest);
-      return res.json({ initialized: true, newResults: 0, announcementUrls, message: 'Saved current results as the notification baseline.' });
+      await saveResultsCheckStatus({ state: 'healthy', lastAttemptAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), lastError: null, lastResultCount: latest.length, lastPublishedCount: 0, lastPageCount: Number(req.body?.pages) || 0 });
+      return res.json({ initialized: true, newResults: 0, announcementUrls, message: 'Saved current PRC results as the notification baseline.' });
     }
 
-    let knownUrls;
-    try {
-      const decoded = JSON.parse(saved);
-      if (!Array.isArray(decoded) || decoded.some((url) => typeof url !== 'string')) throw new Error('Invalid notification baseline.');
-      // Normalize the persisted baseline too; older checks may have saved
-      // the same PRC article under both www and bare-host aliases.
-      knownUrls = new Set(decoded.map((url) => normalizeUrl(url)).filter(Boolean));
-    } catch {
-      await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(latest.map((result) => result.url).slice(0, 500)));
-      const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
-      await persistResultCache(cache.results, cache.fetchedAt);
-      const announcementUrls = await missingAnnouncementUrls(latest);
-      return res.json({ initialized: true, newResults: 0, announcementUrls, message: 'Rebuilt the notification baseline.' });
-    }
-    const newResults = latest.filter((result) => !knownUrls.has(result.url));
-    if (newResults.length) {
-      // Pause ads whenever the official feed adds a result so an admin can
-      // review the page before manually enabling the placement again.
-      await redisCommand('SET', ADSENSE_ENABLED_KEY, 'false');
-    }
-    // Publish the latest official announcements before sending alerts. This
-    // makes result pages available immediately and leaves failed email alerts
-    // eligible for retry on the next scheduled check.
+    const pendingRecords = records.filter(({ record }) => record.publicationStatus === 'published' && record.notificationStatus === 'pending' && !knownUrls.has(record.canonicalUrl));
+    const resultByUrl = new Map(latest.map((result) => [result.url, result]));
+    const newResults = pendingRecords.map(({ record }) => resultByUrl.get(record.canonicalUrl)).filter(Boolean);
+    if (newResults.length) await redisCommand('SET', ADSENSE_ENABLED_KEY, 'false');
     const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
-    await persistResultCache(cache.results, cache.fetchedAt);
+    await persistResultCache(cache.results, cache.fetchedAt, archiveCacheLoaded);
+
     const delivery = newResults.length ? await notifySubscribers(newResults) : { recipients: 0, failed: 0 };
-    if (delivery.failed) return res.status(502).json({ error: 'Some result-alert emails failed. The check will retry on its next scheduled run.', recipients: delivery.recipients, failed: delivery.failed, failureStatuses: delivery.failureStatuses });
-    const mergedUrls = [...new Set([...latest.map((result) => normalizeUrl(result.url)), ...knownUrls].filter(Boolean))].slice(0, 500);
+    if (delivery.failed) {
+      await saveResultsCheckStatus({ state: 'error', lastAttemptAt: new Date().toISOString(), lastError: `${delivery.failed} subscriber alert(s) could not be delivered.`, lastResultCount: latest.length, lastPageCount: Number(req.body?.pages) || 0 });
+      return res.status(502).json({ error: 'Some result-alert emails failed. The failed deliveries will retry idempotently on the next scheduled check.', recipients: delivery.recipients, failed: delivery.failed, failureStatuses: delivery.failureStatuses });
+    }
+    for (const { record } of pendingRecords) {
+      record.notificationStatus = 'sent';
+      await redisCommand('SET', announcementKey(record.canonicalUrl), JSON.stringify(record));
+    }
+    const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 5000);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
     const announcementUrls = await missingAnnouncementUrls([...newResults, ...latest]);
+    await saveResultsCheckStatus({ state: 'healthy', lastAttemptAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), lastError: null, lastResultCount: latest.length, lastPublishedCount: newResults.length, lastPageCount: Number(req.body?.pages) || 0 });
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed, announcementUrls });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
+    try { await saveResultsCheckStatus({ state: 'error', lastAttemptAt: new Date().toISOString(), lastError: String(error.message || 'Check failed.').slice(0, 1200) }); } catch { /* Preserve the original failure if status storage is also down. */ }
     return res.status(502).json({ error: 'Scheduled PRC result check failed.' });
+  } finally {
+    if (ownedLockToken) {
+      try {
+        if (await redisCommand('GET', RESULTS_CHECK_LOCK_KEY) === ownedLockToken) await redisCommand('DEL', RESULTS_CHECK_LOCK_KEY);
+      } catch (error) { console.warn('Could not release result-check lock:', error.message); }
+    }
+  }
+});
+
+app.get('/api/admin/results-check', requireAdmin, async (_req, res) => {
+  try { return res.json({ source: SOURCE_URL, ...(await loadResultsCheckStatus()) }); }
+  catch { return res.status(503).json({ error: 'Could not read the checker status.' }); }
+});
+
+app.post('/api/admin/results-check', requireAdmin, async (_req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const checkerUrl = process.env.PRC_CHECKER_URL || 'https://boardexamtracker-prc-checker.boardexamtracker.workers.dev';
+  if (!cronSecret) return res.status(503).json({ error: 'Set CRON_SECRET on the site and Cloudflare Worker before running a manual check.' });
+  try {
+    const url = new URL(checkerUrl);
+    if (url.protocol !== 'https:') throw new Error('The PRC checker URL must use HTTPS.');
+    const response = await fetch(`${url.href.replace(/\/$/, '')}/manual-check`, { method: 'POST', headers: { Authorization: `Bearer ${cronSecret}`, Accept: 'application/json' }, signal: AbortSignal.timeout(120_000) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) return res.status(response.status).json({ error: body.error || 'The online PRC checker could not run.' });
+    if (body.started !== true) return res.status(502).json({ error: 'The online checker does not expose the secure manual-check endpoint yet. Deploy the updated Cloudflare Worker first.' });
+    return res.json(body);
+  } catch (error) {
+    console.error('Manual PRC checker invocation failed:', error.message);
+    return res.status(502).json({ error: 'Could not reach the online PRC checker. Confirm it has been deployed and try again.' });
   }
 });
 
@@ -1035,8 +1110,8 @@ app.post('/api/notifications/subscribe', async (req, res) => {
   if (!isEmailConfigured()) return res.status(503).json({ error: 'Email alerts are not configured on this server yet.' });
 
   try {
-    if (process.env.NODE_ENV === 'production' && !isPersistentStorageConfigured()) {
-      return res.status(503).json({ error: 'Email alerts are temporarily unavailable while persistent subscriber storage is configured.' });
+    if (!isPersistentStorageConfigured()) {
+      return res.status(503).json({ error: 'Email alerts require Upstash Redis REST credentials for subscriber storage.' });
     }
     const subscription = await addPendingSubscriber(email);
     if (subscription.status === 'subscribed') return res.json({ message: 'This email is already subscribed to result alerts.' });
@@ -1148,7 +1223,7 @@ app.post('/api/cron/cache-announcement-links', async (req, res) => {
       if (typeof resource?.label !== 'string' || typeof resource?.url !== 'string') return [];
       try {
         const url = new URL(resource.url);
-        if (url.protocol !== 'https:' || !['drive.google.com', 'prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname)) return [];
+        if (url.protocol !== 'https:' || !['drive.google.com', 'docs.google.com', 'prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname)) return [];
         return [{ label: resource.label.slice(0, 200), url: url.href }];
       } catch {
         return [];
@@ -1165,6 +1240,7 @@ app.post('/api/cron/cache-announcement-links', async (req, res) => {
       } : { summary: '', facts: [] },
     });
     if (!persisted) return res.status(503).json({ error: 'Could not persist the PRC announcement files. The new result will be retried before publication.' });
+    await attachAnnouncementDocuments(articleUrl, resources, redisCommand);
     saved += 1;
   }
   return res.json({ saved });

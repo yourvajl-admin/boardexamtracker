@@ -10,13 +10,14 @@ function isEmailConfigured() {
   }
 }
 
-async function sendEmail({ to, subject, html, text }) {
+async function sendEmail({ to, subject, html, text, idempotencyKey }) {
   if (!isEmailConfigured()) throw new Error('Email delivery is not configured. Set RESEND_API_KEY and EMAIL_FROM.');
   const response = await fetch(RESEND_ENDPOINT, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       'Content-Type': 'application/json',
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
     body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [to], subject, html, text }),
   });

@@ -3,6 +3,7 @@ const { execFile } = require('node:child_process');
 const dns = require('node:dns');
 const { promisify } = require('node:util');
 const { extractAnnouncementDetails } = require('./announcement-details');
+const { PROFESSION_CATEGORIES, categorize } = require('./professions');
 
 // PRC's web server is intermittently unreachable over IPv6 from hosted runners.
 // Prefer IPv4 for Node's fetch so a broken IPv6 route does not fail the check.
@@ -21,18 +22,6 @@ const PRC_REQUEST_HEADERS = {
   'User-Agent': 'BoardExamTracker/1.0 (+independent public results index)',
   Accept: 'text/html',
 };
-const PROFESSION_CATEGORIES = [
-  'Accountancy', 'Aeronautical Engineering', 'Agricultural and Biosystems Engineering', 'Agriculture', 'Architecture',
-  'Chemical Engineering', 'Chemistry', 'Civil Engineering', 'Criminology', 'Customs Brokers', 'Dentistry',
-  'Electrical Engineering', 'Electronics Engineering', 'Environmental Planning', 'Fisheries', 'Food Technology',
-  'Foresters', 'Geodetic Engineering', 'Geology', 'Guidance and Counseling', 'Interior Design', 'Landscape Architecture',
-  'Librarianship', 'Master Plumbing', 'Mechanical Engineering', 'Medical Technology', 'Medicine', 'Metallurgical Engineering',
-  'Midwifery', 'Mining Engineering', 'Naval Architecture', 'Nursing', 'Nutrition and Dietetics', 'Occupational Therapy',
-  'Optometry', 'Pharmacy', 'Physical Therapy', 'Professional Teachers', 'Psychology', 'Radiologic Technology',
-  'Real Estate Service', 'Respiratory Therapy', 'Sanitary Engineering', 'Social Workers', 'Speech-Language Pathology',
-  'Veterinary Medicine',
-];
-
 function normalizeUrl(href) {
   try {
     const url = new URL(href, SOURCE_URL);
@@ -52,63 +41,22 @@ function normalizeUrl(href) {
 
 function parseDate(value) {
   const text = (value || '').replace(/\s+/g, ' ').trim();
-  const match = text.match(/\b(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})\b/);
+  const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) {
+    const date = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : null;
+  }
+  // Drupal can render date and title as adjacent text nodes without spaces.
+  const match = text.match(/\b(\d{1,2})\s*([A-Za-z]+),?\s*(\d{4})(?!\d)/);
   if (!match) return null;
-  const date = new Date(`${match[2]} ${match[1]}, ${match[3]} UTC`);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
-}
-
-function categorize(title) {
-  const checks = [
-    ['Accountancy', /\b(certified public accountants?|accountants?|cpas?)\b/i],
-    ['Aeronautical Engineering', /\baeronautical engineers?\b/i],
-    ['Agricultural and Biosystems Engineering', /\bagricultural and biosystems engineers?\b/i],
-    ['Agriculture', /\b(agriculturists?|agriculture licensure|agriculture professionals?)\b/i],
-    ['Landscape Architecture', /\blandscape architects?\b/i],
-    ['Naval Architecture', /\bnaval architects?\b/i],
-    ['Architecture', /\barchitects? licensure|\barchitects? examination|\barchitects?\b/i],
-    ['Chemical Engineering', /\bchemical engineers?\b/i],
-    ['Chemistry', /\b(chemists?|chemical technicians?)\b/i],
-    ['Civil Engineering', /\bcivil engineers?\b/i],
-    ['Criminology', /\bcriminologists?\b/i],
-    ['Customs Brokers', /\bcustoms brokers?\b/i],
-    ['Dentistry', /\b(dentists?|dental hygienists?|dental technologists?)\b/i],
-    ['Electrical Engineering', /\b(electrical engineers?|master electricians?)\b/i],
-    ['Electronics Engineering', /\b(electronics engineers?|electronics technicians?)\b/i],
-    ['Environmental Planning', /\benvironmental planners?\b/i],
-    ['Fisheries', /\bfisheries professionals?\b/i],
-    ['Food Technology', /\bfood technologists?\b/i],
-    ['Foresters', /\bforesters?\b/i],
-    ['Geodetic Engineering', /\bgeodetic engineers?\b/i],
-    ['Geology', /\bgeologists?\b/i],
-    ['Guidance and Counseling', /\b(guidance counselors?|guidance and counseling)\b/i],
-    ['Interior Design', /\binterior designers?\b/i],
-    ['Librarianship', /\blibrarians?\b/i],
-    ['Master Plumbing', /\bmaster plumbers?\b/i],
-    ['Mechanical Engineering', /\b(mechanical engineers?|professional mechanical engineers?|certified plant mechanics?)\b/i],
-    ['Medical Technology', /\b(medical technologists?|medical laboratory technicians?)\b/i],
-    ['Medicine', /\b(physicians?|medical doctors?|foreign medical professionals?)\b/i],
-    ['Metallurgical Engineering', /\bmetallurgical engineers?\b/i],
-    ['Midwifery', /\bmidwives?\b/i],
-    ['Mining Engineering', /\bmining engineers?\b/i],
-    ['Naval Architecture', /\bnaval architects?\b/i],
-    ['Nursing', /\bnurses?\b/i],
-    ['Nutrition and Dietetics', /\b(nutritionist[- ]dietitians?|nutrition and dietetics)\b/i],
-    ['Occupational Therapy', /\boccupational therapists?\b/i],
-    ['Optometry', /\boptometrists?\b/i],
-    ['Pharmacy', /\bpharmacists?\b/i],
-    ['Physical Therapy', /\bphysical therapists?\b/i],
-    ['Professional Teachers', /\b(teachers?|let)\b/i],
-    ['Psychology', /\b(psychologists?|psychometricians?)\b/i],
-    ['Radiologic Technology', /\b(radiologic technologists?|x[- ]ray technologists?)\b/i],
-    ['Real Estate Service', /\b(real estate (?:brokers?|appraisers?|consultants?|service professionals?))\b/i],
-    ['Respiratory Therapy', /\brespiratory therapists?\b/i],
-    ['Sanitary Engineering', /\bsanitary engineers?\b/i],
-    ['Social Workers', /\bsocial workers?\b/i],
-    ['Speech-Language Pathology', /\bspeech[- ]language pathologists?\b/i],
-    ['Veterinary Medicine', /\b(veterinarians?|veterinary medicine)\b/i],
-  ];
-  return checks.find(([, pattern]) => pattern.test(title))?.[0] || 'PRC Examination Result';
+  const month = new Date(`${match[2]} 1, 2000 UTC`).getUTCMonth();
+  if (Number.isNaN(month)) return null;
+  const day = Number(match[1]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return null;
+  return date.toISOString().slice(0, 10);
 }
 
 function extractAnnouncementLinks(html, articleUrl) {
@@ -122,7 +70,7 @@ function extractAnnouncementLinks(html, articleUrl) {
     if (!label || !resourceLabel.test(label) || !href) return;
     try {
       const url = new URL(href, articleUrl);
-      if (url.protocol !== 'https:') return;
+      if (url.protocol !== 'https:' || !['www.prc.gov.ph', 'prc.gov.ph', 'drive.google.com', 'docs.google.com'].includes(url.hostname)) return;
       resources.push({ label, url: url.href });
     } catch {
       // Ignore malformed links published in the announcement.
@@ -172,32 +120,44 @@ async function fetchAnnouncementLinks(articleUrl) {
   };
 }
 
-async function fetchPrcHtml(sourceUrl, { maxBytes = 2 * 1024 * 1024 } = {}) {
+async function fetchPrcHtml(sourceUrl, { maxBytes = 2 * 1024 * 1024, fetchImpl = fetch, curlFallback = true, retryDelays = SOURCE_RETRY_DELAYS_MS, timeoutMs = 8000 } = {}) {
   const original = new URL(sourceUrl);
+  if (original.protocol !== 'https:' || !ALLOWED_HOSTS.has(original.hostname)) throw new Error('Only official PRC HTTPS URLs can be fetched.');
   const urls = SOURCE_HOSTS.map((host) => {
     const url = new URL(original.href);
     url.hostname = host;
     return url.href;
   });
   const errors = [];
-  for (let attempt = 0; attempt <= SOURCE_RETRY_DELAYS_MS.length; attempt += 1) {
-    if (attempt) await new Promise((resolve) => setTimeout(resolve, SOURCE_RETRY_DELAYS_MS[attempt - 1]));
+  for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt - 1]));
     for (const url of urls) {
       try {
-        const response = await fetch(url, {
-          headers: PRC_REQUEST_HEADERS,
-          signal: AbortSignal.timeout(8000),
-        });
+        let candidate = new URL(url);
+        let response;
+        for (let redirects = 0; redirects <= 5; redirects += 1) {
+          response = await fetchImpl(candidate, { headers: PRC_REQUEST_HEADERS, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+          if (![301, 302, 303, 307, 308].includes(response.status)) break;
+          const location = response.headers.get('location');
+          const redirect = location ? new URL(location, candidate) : null;
+          if (!redirect || redirect.protocol !== 'https:' || !ALLOWED_HOSTS.has(redirect.hostname)) throw new Error('PRC redirected outside the approved PRC hosts.');
+          candidate = redirect;
+        }
+        if ([301, 302, 303, 307, 308].includes(response.status)) throw new Error('PRC exceeded the redirect limit.');
         if (!response.ok) throw new Error(`PRC returned HTTP ${response.status}`);
-        return await response.text();
+        const html = await response.text();
+        if (Buffer.byteLength(html) > maxBytes) throw new Error(`PRC page exceeded the ${maxBytes}-byte response limit.`);
+        return html;
       } catch (fetchError) {
         try {
+          if (!curlFallback || /redirected outside|redirect limit/.test(fetchError.message)) throw fetchError;
           const { stdout } = await execFileAsync('curl', [
-            '--ipv4', '--fail', '--silent', '--show-error', '--location', '--compressed', '--max-time', '8',
+            '--ipv4', '--fail', '--silent', '--show-error', '--compressed', '--max-time', String(Math.ceil(timeoutMs / 1000)),
             '--user-agent', 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
             '--header', 'Accept: text/html,application/xhtml+xml',
             url,
           ], { maxBuffer: maxBytes, timeout: 10000 });
+          if (Buffer.byteLength(stdout) > maxBytes) throw new Error(`PRC page exceeded the ${maxBytes}-byte response limit.`);
           return stdout;
         } catch (curlError) {
           errors.push(`${new URL(url).hostname}: ${fetchError.message}; curl: ${curlError.message}`);
@@ -220,7 +180,7 @@ function extractResults(html) {
     let container = anchor;
     for (let depth = 0; depth < 5 && container.parent().length; depth += 1) {
       container = container.parent();
-      if (/\b\d{1,2}\s+[A-Za-z]+,?\s+\d{4}\b/.test(container.text())) break;
+      if (/\b\d{1,2}\s*[A-Za-z]+,?\s*\d{4}(?!\d)/.test(container.text())) break;
     }
     const text = container.text().replace(/\s+/g, ' ').trim();
     const date = parseDate(text);
@@ -238,10 +198,10 @@ function extractResults(html) {
 function getLastPage(html) {
   const $ = cheerio.load(html);
   let lastPage = 0;
-  $('.pager a[href], nav[aria-label*="pagination"] a[href]').each((_, element) => {
+  $('.pager a[href], nav[aria-label*="pagination"] a[href], [class*="pager"] a[href]').each((_, element) => {
     try {
       const url = new URL($(element).attr('href'), SOURCE_URL);
-      if (url.hostname !== 'www.prc.gov.ph' || !url.pathname.startsWith('/articles/exam-results')) return;
+      if (!ALLOWED_HOSTS.has(url.hostname) || !url.pathname.startsWith('/articles/exam-results')) return;
       const page = Number(url.searchParams.get('page'));
       if (Number.isInteger(page) && page >= 0 && page <= 500) lastPage = Math.max(lastPage, page);
     } catch {
@@ -277,4 +237,4 @@ async function fetchResults({ maxPage } = {}) {
   return [...unique.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
-module.exports = { SOURCE_URL, PROFESSION_CATEGORIES, extractResults, fetchResults, normalizeUrl, categorize, fetchAnnouncementLinks, extractAnnouncementLinks, extractAnnouncementDetails, getLastPage };
+module.exports = { SOURCE_URL, PROFESSION_CATEGORIES, extractResults, fetchResults, fetchPrcHtml, normalizeUrl, parseDate, categorize, fetchAnnouncementLinks, extractAnnouncementLinks, extractAnnouncementDetails, getLastPage };

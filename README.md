@@ -8,14 +8,16 @@ BoardExamTracker is an independent, responsive tracker for Philippine profession
 - Extracts titles and release dates, then creates short rephrased summaries; classifies titles against the complete list of 46 PRC professional regulatory board categories.
 - Writes concise summaries from selected facts such as pass counts, exam timing, testing centers, and release turnaround; it does not reproduce announcement paragraphs as site copy.
 - Removes duplicate announcement URLs and sorts newest first.
-- Caches the PRC response for five minutes, supports an explicit refresh, and serves stale cached results when PRC is unavailable.
-- Refreshes the PRC archive in the background every five minutes; open pages show a live countdown and check for updated results automatically.
+- Caches PRC results for five minutes, supports an explicit refresh, and serves previously saved results when PRC is unavailable.
+- A Cloudflare Worker checks the PRC listing every five minutes, scans its newest pages plus a rotating pair of older pages, and publishes updates through the existing results API without rebuilding the site.
+- Stores each verified announcement under a stable URL-derived Redis key and a date-ordered index; missing or malformed announcements stay pending and are not published as confirmed.
+- Records checker health, last successful check, errors, and scan progress in Upstash Redis; `/admin` shows the status and offers an admin-only immediate check.
 - Responsive results cards, instant search (including CELE, MPLE, and MELE acronym matching), date and profession filters, and progressive loading.
 - Displays the latest 12 results first to avoid waiting for a full archive crawl before the homepage appears.
 - Dedicated result pages render server-side Open Graph/Twitter metadata and a per-result 1200×630 PNG share card showing the exam title, category, release date, and summary.
 - Persistent light/dark appearance toggle in the header, with color-aware logos and browser theme color.
 - Horizontal, touch-friendly carousel for all 46 PRC profession categories, with counts derived from the fetched results.
-- Opt-in email alerts with email confirmation and an unsubscribe link; alerts are sent when the five-minute PRC check discovers new announcements. Subscriber records use Upstash Redis in production and a private local JSON file for development.
+- Opt-in email alerts with email confirmation and an unsubscribe link; alerts are sent when the five-minute PRC check discovers new announcements. Subscriber records use Upstash Redis REST API in every environment.
 - Private `/admin` page with a searchable subscriber email list, per-subscriber resend controls for the latest result, manual unsubscribe controls, an active-viewer count refreshed every 15 seconds, and a persistent AdSense display toggle.
 - One optional, manually placed responsive AdSense unit on the homepage, below the results and load-more control; no auto ads, sticky ads, pop-ups, ads in result cards, or ads in detail panels.
 - Privacy policy at `/privacy.html`; `/ads.txt` is generated from the AdSense publisher ID when configured.
@@ -30,7 +32,7 @@ To request Google indexing, verify `boardexamtracker.com` as a Domain property i
 
 ## Requirements
 
-Node.js 18 or newer and npm.
+Node.js 22 or newer and npm.
 
 ## Installation
 
@@ -57,35 +59,46 @@ Set `PORT` to change the default port (3000). Email alerts use Resend and requir
 - `RESEND_API_KEY`: Resend API key.
 - `EMAIL_FROM`: sender address on a domain verified with Resend, configured for BoardExamTracker as `BoardExamTracker <alerts@boardexamtracker.com>`.
 - `PUBLIC_BASE_URL`: public HTTPS site URL used in confirmation and unsubscribe links (for local development, `http://localhost:3000` is accepted).
-- `CRON_SECRET`: long random secret protecting the scheduled result-check endpoint; add the same value to GitHub Actions as `BOARD_EXAMTRACKER_CRON_SECRET`.
+- `CRON_SECRET`: long random secret protecting checker endpoints; configure the same value in Vercel and as the Cloudflare Worker secret. The optional manual GitHub workflow uses the repository secret `BOARD_EXAMTRACKER_CRON_SECRET`.
+- `PRC_CHECKER_URL`: optional Worker HTTPS URL; defaults to the deployed BoardExamTracker PRC Worker URL and is used by the admin-only immediate-check button.
 
-Copy `.env.example` to `.env`, fill in those values, then restart the server. Without email configuration, the signup form reports that email alerts are unavailable. In production, the Cloudflare Worker fetches the official PRC feed every five minutes and submits announcements to the site, which stores the shared result snapshot and known links in Upstash Redis. Its first run establishes the baseline without emailing old results; later new announcements are sent to confirmed subscribers. The manual GitHub Actions workflow is retained for on-demand diagnostics, but Cloudflare is the automatic checker. The user confirms subscription by email, and each alert contains an unsubscribe link.
+Copy `.env.example` to `.env`, fill in those values, then restart the server. Without email configuration, signup reports that alerts are unavailable. The Cloudflare Worker fetches the official listing and submits validated results to the existing server API. Upstash stores the shared result snapshot, durable URL-keyed announcement records, a date-ordered index, check status, and email-delivery idempotency keys. New records become visible through `/api/results` without a Vercel build or redeployment. The first successful run seeds the existing-result baseline without emailing old notices; later new announcements alert confirmed subscribers and link to the matching result page. The manual GitHub Actions workflow is available for diagnostics and is not scheduled, so it cannot compete with Cloudflare's cron.
 
 ### Cloudflare scheduled checker
 
-`cloudflare/prc-checker.js` runs on Cloudflare Workers, reads the official PRC results page and linked PDFs, and submits parsed results to the production API so the existing publish, persistence, and subscriber-email logic remains in use. Its five-minute schedule has been deployed and confirmed to reach PRC and the production API. New deployments require Cloudflare Wrangler authentication.
+`cloudflare/prc-checker.js` runs on Cloudflare Workers. It reads the official PRC Exam Results listing at `https://www.prc.gov.ph/articles/exam-results` and PRC article pages, validates redirects to PRC hosts, follows pagination, and sends article/document links to the existing API. It checks the newest three pages and two older pages per run; the older-page cursor is persisted in Redis so backfilled announcements are eventually scanned. Listing requests use up to three attempts with exponential backoff for temporary network failures and retryable HTTP statuses; `Retry-After` is honored, and a long requested wait defers the retry to the next scheduled run. Permanent client errors are not retried. `prc_http_attempt` logs contain the request URL, status, elapsed time, timestamp, and a small allowlist of response headers, but never request credentials, cookies, or subscriber data. An unsuccessful fetch or a page with no parseable dated results is recorded as a failed check, not as an empty feed; previously published announcements remain available. `cloudflare/wrangler.toml` configures the five-minute cron and page-scan settings. The Worker uses the existing Vercel API and Upstash store; no extra database or persistent process is required.
 
 From the repository root, sign in and deploy it with Wrangler:
 
 ```sh
-npx wrangler@latest login
-npx wrangler@latest deploy --config cloudflare/wrangler.toml
-npx wrangler@latest secret put CRON_SECRET --config cloudflare/wrangler.toml
+npx --yes wrangler@latest login
+npx --yes wrangler@latest deploy --config cloudflare/wrangler.toml
+npx --yes wrangler@latest secret put CRON_SECRET --config cloudflare/wrangler.toml
 ```
 
-For `CRON_SECRET`, use the same value configured as `CRON_SECRET` in the production Vercel environment. If rotating it, update Vercel and GitHub's `BOARD_EXAMTRACKER_CRON_SECRET`, redeploy Vercel, and set the Worker secret with Wrangler. Check Cloudflare Workers → Logs to confirm scheduled invocations and inspect errors.
+Before deploying the Worker, deploy the server/API changes to Vercel and set `CRON_SECRET`, `UPSTASH_REDIS_REST_URL`, and `UPSTASH_REDIS_REST_TOKEN` in Vercel Production. Set the same `CRON_SECRET` with the Wrangler command above. The optional `SITE_CRON_URL` Worker variable can point to the Vercel API endpoint if it differs from the default `https://boardexamtracker.vercel.app/api/cron/check-results`. After deployment, check Cloudflare Workers → Logs and `/admin` → **PRC result checker**. Do not treat a scheduled invocation alone as proof of a successful source check; the admin panel must show a recent successful check with no error.
+
+PRC can temporarily reject or fail connections from hosted networks. The checker reports this in `/admin` and retains previously published data; it does not invent new results or switch to a non-PRC source. Robots.txt allows access to the public results listing. No access controls or anti-bot protections are bypassed.
+
+### Running and checking the automation
+
+- Locally: `npm run dev` starts the website; the local server refreshes results while running. It does not replace the online Cloudflare schedule.
+- Automated tests: `npm test`. Tests use saved HTML and mocked Upstash/network responses; they do not repeatedly contact PRC.
+- Manual online check: sign in to `/admin` and choose **Check PRC now**. This invokes the Worker through an authenticated server endpoint.
+- Live verification: `/admin` shows last attempt, last successful check, result count, newly published count, and the most recent error. Open `/api/results` to verify a published announcement is served by the site.
+- A database migration is not needed: Redis uses versioned keys `boardexamtracker:announcement:v1:*` and `boardexamtracker:announcements:index:v1`; records are not expired or deleted when absent from a scrape.
 
 ## Private admin page
 
-Visit `/admin` to sign in to the private dashboard. It is not linked from public navigation. The dashboard provides a searchable subscriber list, per-subscriber **Resend alert**, manual unsubscribe, a live-viewer count, an AdSense display toggle, a **Send latest result** action, and a **Blog posts** section. Admins can create, edit, and delete public posts with a title, text, and optional photo. Posts are stored in Upstash Redis in production and in `data/blog-posts.json` locally; photos are optimized to WebP and limited to 1 MB. The public blog is at `/blog` or `/blog.html`. The blog supports up to 100 posts. The one-time email action sends only to the address entered and is limited to three sends per hour per admin IP. Configure `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_SESSION_SECRET` in the server environment; the session secret must be at least 32 characters (`openssl rand -hex 32` generates one). Admin sessions use an HTTP-only, same-site cookie and expire after eight hours. Sign-in attempts are rate-limited. On Vercel, enter the credentials under Project Settings → Environment Variables and redeploy. Do not commit real credentials or send them in chat.
+Visit `/admin` to sign in to the private dashboard. It is not linked from public navigation. The dashboard provides a searchable subscriber list, per-subscriber **Resend alert**, manual unsubscribe, a live-viewer count, an AdSense display toggle, a **Send latest result** action, and a **Blog posts** section. Admins can create, edit, and delete public posts with a title, text, and optional photo. Subscriber records, posts, photos, viewer sessions, ad settings, result snapshots, and PRC attachment metadata use the Upstash Redis REST API; features requiring persistent state return an error when Upstash is not configured. Photos are optimized to WebP and limited to 1 MB. The public blog is at `/blog` or `/blog.html`. The blog supports up to 100 posts. The one-time email action sends only to the address entered and is limited to three sends per hour per admin IP. Configure `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_SESSION_SECRET` in the server environment; the session secret must be at least 32 characters (`openssl rand -hex 32` generates one). Admin sessions use an HTTP-only, same-site cookie and expire after eight hours. Sign-in attempts are rate-limited. On Vercel, enter the credentials under Project Settings → Environment Variables and redeploy. Do not commit real credentials or send them in chat.
 
-In production, configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` from an Upstash Redis database. The same private store holds subscriber records and hashed, random active-viewer session IDs. A visitor is counted while a visible page sends a heartbeat and for up to 90 seconds after its last heartbeat. Without these variables, production email signups and manual subscriber management are disabled, and the admin page explains that a reliable cross-instance viewer count is unavailable. Local development falls back to the ignored `data/email-subscribers.json` file and a per-process viewer count. Existing local file records are not automatically copied into Redis.
+Configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` from the same Upstash Redis database for local development, preview, and production. The application does not use a local JSON database or accept alternate `KV_REST_API_*` storage credentials. The private Upstash store holds subscriber records, blog content and photos, result and attachment caches, ad settings, and hashed random active-viewer session IDs. A visitor is counted while a visible page sends a heartbeat and for up to 90 seconds after its last heartbeat. Without the Upstash credentials, stateful features stay unavailable rather than writing to another database. Existing local JSON records are not imported automatically.
 
 ## API
 
-`GET /api/results` returns `{ results, lastUpdated, cached, stale, source }`. Add `?refresh=true` to bypass the five-minute fresh-cache window. A cache refresh request is shared with any concurrent refresh. If PRC is unavailable, stale results are returned when present; without a cache, the endpoint returns HTTP 503 and an empty result list.
+`GET /api/results` returns `{ results, lastUpdated, cached, stale, source }`. It combines the saved result snapshot with URL-deduplicated, date-indexed PRC announcement records. Add `?refresh=true` to request a source refresh. If PRC is unavailable, the previous results remain available; a source failure does not delete announcements. A result published by the Worker is available through this same API without a code deployment.
 
-The server reads the full PRC archive on startup. It then checks the three newest listing pages every five minutes and merges new announcements into the cached archive, avoiding repeated requests for older pages. Open browser tabs check for fresh results every five minutes while visible, so updates appear without manually pressing the refresh button.
+The homepage loads the latest 12 saved announcements. Visitors who browse older results request the archive on demand. Open tabs refresh the server data periodically while visible; the Cloudflare Worker performs the independent scheduled PRC check even when no one is visiting the website.
 
 ## AdSense setup
 
@@ -99,9 +112,9 @@ The single ad placement is clearly labeled, in normal document flow, and separat
 
 ## Scraper maintenance
 
-All extraction logic lives in `src/scraper.js`. It fetches `https://www.prc.gov.ph/articles/exam-results` and follows the numbered pages advertised by the official listing, pausing between page requests. It accepts HTTPS links on the `prc.gov.ph` host, finds linked titles with a dated result listing ancestor, and extracts the listing excerpt. It rejects undated items and non-result titles, deduplicates by normalized announcement URL and sorts by ISO date descending. No PRCBoard content is used.
+The server-side scraper is in `src/scraper.js`; the scheduled Worker parser is in `cloudflare/prc-checker.js`. Both fetch `https://www.prc.gov.ph/articles/exam-results`, follow the listing's page links, normalize official article URLs, and reject invalid dates and non-result titles. Redirects are limited to HTTPS PRC hosts. The Worker checks recent pages every run and rotates through older pages to find delayed or backfilled notices. Result-document links are accepted only from PRC or Google Drive/Docs hosts. No PRCBoard content is used.
 
-If PRC changes its page markup, inspect the public results listing and update the pagination selector in `getLastPage()` or listing ancestor/date/excerpt selection in `extractResults()`. Keep URL host validation, date validation, deduplication, and sorting in place. A change that prevents reliable date extraction should not be worked around by inventing release dates. The category taxonomy and classifier are in `PROFESSION_CATEGORIES` and `categorize()` in `src/scraper.js`; the taxonomy follows PRC's [Professional Regulatory Boards directory](https://www.prc.gov.ph/professional-regulatory-boards). Unrecognized titles use the generic “PRC Examination Result” category.
+If PRC changes its page markup, inspect the public results listing and update the pagination selector in `getLastPage()` or listing ancestor/date/excerpt selection in the relevant parser. Keep URL host validation, date validation, deduplication, and sorting in place. A change that prevents reliable date extraction should not be worked around by inventing release dates. The shared profession taxonomy and classifier are in `src/professions.js`; the taxonomy follows PRC's [Professional Regulatory Boards directory](https://www.prc.gov.ph/professional-regulatory-boards). Unrecognized titles use the generic “PRC Examination Result” category.
 
 ## Source and disclaimer
 
