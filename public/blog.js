@@ -70,18 +70,4 @@ async function loadPosts() {
 }
 
 loadMoreButton.addEventListener('click', loadPosts);
-document.querySelector('.menu-toggle').addEventListener('click', (event) => {
-  const button = event.currentTarget;
-  const navigation = document.querySelector('#primary-nav');
-  const open = button.getAttribute('aria-expanded') !== 'true';
-  button.setAttribute('aria-expanded', String(open));
-  button.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
-  navigation.classList.toggle('open', open);
-});
-document.querySelector('#primary-nav').addEventListener('click', (event) => {
-  if (!event.target.closest('a')) return;
-  document.querySelector('#primary-nav').classList.remove('open');
-  document.querySelector('.menu-toggle').setAttribute('aria-expanded', 'false');
-});
-
 loadPosts();

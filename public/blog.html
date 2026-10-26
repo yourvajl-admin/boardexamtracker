@@ -15,31 +15,44 @@
   <meta name="twitter:title" content="BoardExamTracker Blog | Board Exam Updates">
   <meta name="twitter:description" content="Updates, announcements, and helpful posts from BoardExamTracker.">
   <link rel="canonical" href="https://www.boardexamtracker.com/blog.html">
-  <link rel="icon" href="/favicon.svg?v=20261012-1" type="image/svg+xml">
+  <link rel="icon" href="/favicon.svg?v=20261009-16" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png?v=20261026">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <script src="/theme.js?v=20261012-1"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css?v=20261012-1">
   <link rel="stylesheet" href="/theme.css?v=20261012-1">
   <link rel="stylesheet" href="/blog.css?v=20261012-1">
   <script src="/blog.js?v=20261012-1" defer></script>
+  <link rel="preload" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/Phosphor.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <script src="/theme.js?v=20261026-6"></script>
+  <link rel="stylesheet" href="/site.css?v=20261026-11">
+  <script src="/site.js?v=20261026-8" defer></script>
 </head>
-<body>
+<body class="legacy-page">
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header">
-    <div class="header-inner wrap">
-      <a class="brand" href="/" aria-label="BoardExamTracker home"><img class="brand-wordmark" src="/logo.svg?v=20261009-16" alt="BoardExamTracker"></a>
-      <button class="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="primary-nav"><span></span><span></span><span></span></button>
-      <nav id="primary-nav" class="nav-links" aria-label="Main navigation"><a href="/#home">Home</a><a href="/#latest">Latest results</a><a href="/#latest">All results</a><a href="/#professions">Professions</a><a href="/blog.html" aria-current="page">Blog</a><a href="/#about">About</a></nav>
-      <a class="header-search" href="/#search" aria-label="Search board exam results"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg></a>
-      <button class="theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><svg class="theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8 8.7 8.7 0 1 0 20.2 15.1Z"/></svg></button>
+  <header class="site-top">
+    <div class="wrap top-inner">
+      <a class="logo-link" href="/" aria-label="BoardExamTracker home"><img src="/favicon.svg?v=20261009-16" width="40" height="40" alt=""><span class="logo-text">BoardExam<span>Tracker</span></span></a>
+      <nav id="primary-nav" class="top-nav" aria-label="Main navigation"><a href="/">Home</a><a href="/latest-results">Latest Results</a><div class="nav-drop"><button type="button" aria-expanded="false" aria-controls="profession-menu">Professions <i class="ph ph-caret-down" aria-hidden="true"></i></button><div class="drop-panel" id="profession-menu" hidden><div class="drop-grid"><a href="/latest-results?profession=Professional%20Teachers"><i class="ph ph-chalkboard-teacher" aria-hidden="true"></i>Teachers (LET)</a><a href="/latest-results?profession=Nursing"><i class="ph ph-first-aid" aria-hidden="true"></i>Nursing (NLE)</a><a href="/latest-results?profession=Accountancy"><i class="ph ph-calculator" aria-hidden="true"></i>Accountancy (CPA)</a><a href="/latest-results?profession=Criminology"><i class="ph ph-shield-check" aria-hidden="true"></i>Criminology</a><a href="/latest-results?profession=Civil%20Engineering"><i class="ph ph-bridge" aria-hidden="true"></i>Civil Engineering</a><a href="/latest-results?profession=Medicine"><i class="ph ph-stethoscope" aria-hidden="true"></i>Medicine</a><a href="/latest-results?profession=Medical%20Technology"><i class="ph ph-test-tube" aria-hidden="true"></i>Medical Technology</a><a href="/latest-results?profession=Psychology"><i class="ph ph-brain" aria-hidden="true"></i>Psychology</a></div><a class="drop-all" href="/professions">View all 46 professions <i class="ph ph-arrow-right" aria-hidden="true"></i></a></div></div><a href="/blog.html" aria-current="page">Blog</a><a href="/#about">About</a></nav>
+      <div class="top-actions"><form class="top-search" action="/latest-results" method="get" role="search"><label class="sr-only" for="top-search-input">Search board exam results</label><i class="ph ph-magnifying-glass" aria-hidden="true"></i><input id="top-search-input" name="q" type="search" placeholder="Search results…" autocomplete="off"></form><a class="icon-btn search-jump" href="/latest-results#result-search" aria-label="Search board exam results"><i class="ph ph-magnifying-glass" aria-hidden="true"></i></a><a class="icon-btn alerts-btn" href="/#email-alert-section" aria-label="Get email alerts"><i class="ph ph-bell" aria-hidden="true"></i><span>Email alerts</span></a><button class="icon-btn theme-toggle" type="button" aria-label="Switch to dark mode" aria-pressed="false"><i class="ph ph-sun" aria-hidden="true"></i><i class="ph ph-moon" aria-hidden="true"></i></button></div>
     </div>
   </header>
   <main id="main" class="blog-page">
     <section class="blog-hero wrap"><div class="eyebrow blue-eyebrow">BOARD EXAM TRACKER</div><h1>Updates, explained.</h1><p>Announcements and useful information for Philippine board exam candidates, published by BoardExamTracker.</p></section>
-    <section class="blog-content wrap" aria-labelledby="blog-posts-heading"><div class="blog-section-heading"><div><div class="eyebrow blue-eyebrow">FROM THE BLOG</div><h2 id="blog-posts-heading">Latest posts</h2></div><a href="/" class="blog-back-link">Browse exam results <span aria-hidden="true">→</span></a></div><p id="blog-status" class="blog-status" role="status" aria-live="polite">Loading posts…</p><div id="blog-posts" class="blog-posts" aria-live="polite"></div><button id="blog-load-more" class="blog-load-more" type="button" hidden>Load more posts <span aria-hidden="true">↓</span></button></section>
+    <section class="blog-content wrap" aria-labelledby="blog-posts-heading"><div class="blog-section-heading"><div><div class="eyebrow blue-eyebrow">FROM THE BLOG</div><h2 id="blog-posts-heading">Latest posts</h2></div><a href="/latest-results" class="blog-back-link">Browse exam results <span aria-hidden="true">→</span></a></div><p id="blog-status" class="blog-status" role="status" aria-live="polite">Loading posts…</p><div id="blog-posts" class="blog-posts" aria-live="polite"></div><button id="blog-load-more" class="blog-load-more" type="button" hidden>Load more posts <span aria-hidden="true">↓</span></button></section>
   </main>
-  <footer class="site-footer"><div class="wrap footer-main"><div class="footer-brand"><a class="brand" href="/" aria-label="BoardExamTracker home"><img class="brand-wordmark" src="/logo-light.svg?v=20261009-16" alt="BoardExamTracker"></a><p>An independent guide to Philippine professional licensure examination results.</p></div><div class="footer-links"><div><b>Explore</b><a href="/">Home</a><a href="/#latest">Latest results</a><a href="/blog.html">Blog</a><a href="/#about">About</a></div><div><b>Information</b><a href="/privacy.html">Privacy policy</a><a href="https://www.prc.gov.ph/articles/exam-results" target="_blank" rel="noopener noreferrer">Official PRC results</a></div></div></div><div class="wrap footer-bottom"><span>© 2026 BoardExamTracker</span><p>Independent results information platform. Not affiliated with or endorsed by PRC.</p></div></footer>
+  <dialog id="disclaimer-dialog" class="disclaimer-dialog" aria-labelledby="disclaimer-title"><div class="disclaimer-inner"><button id="disclaimer-close" class="dialog-close" type="button" aria-label="Close disclaimer"><i class="ph ph-x" aria-hidden="true"></i></button><span class="kicker">About this website</span><h2 id="disclaimer-title">Disclaimer</h2><p><strong>BoardExamTracker is an independent website.</strong> It is not affiliated with, endorsed by, or operated by the Professional Regulation Commission (PRC).</p><p>Exam result titles, dates, summaries, and linked documents are gathered from publicly available PRC announcements. Our summaries are rephrased for easier scanning and may not include every condition or later update.</p><p><strong>PRC is the official authority for examination results.</strong> Check the PRC announcement and its linked documents for complete details and confirm important information directly with PRC.</p><a class="disclaimer-source" href="https://www.prc.gov.ph/articles/exam-results" target="_blank" rel="noopener noreferrer">Visit the official PRC Exam Results page <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a></div></dialog>
+  <footer class="site-foot">
+    <div class="wrap foot-main">
+      <div class="foot-brand"><a class="logo-link" href="/" aria-label="BoardExamTracker home"><img src="/favicon.svg?v=20261009-16" width="40" height="40" alt=""><span class="logo-text">BoardExam<span>Tracker</span></span></a><p>Board exam results, made easier. An independent guide to Philippine professional licensure examination results.</p></div>
+      <div class="foot-col"><b>Quick links</b><a href="/">Home</a><a href="/latest-results">Latest results</a><a href="/professions">Professions</a><a href="/#email-alert-section">Email alerts</a><a href="/blog.html">Blog</a><a href="/#about">About</a></div>
+      <div class="foot-col"><b>Official sources</b><a href="https://www.prc.gov.ph/articles/exam-results" target="_blank" rel="noopener noreferrer">PRC Exam Results <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a><a href="https://www.prc.gov.ph/" target="_blank" rel="noopener noreferrer">PRC Official Website <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a><a href="https://www.prc.gov.ph/archives/2026" target="_blank" rel="noopener noreferrer">PRC Archives <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a></div>
+      <div class="foot-col"><b>Legal</b><button id="open-disclaimer" type="button">Disclaimer</button><a href="/privacy.html">Privacy policy</a></div>
+    </div>
+    <div class="wrap foot-bottom"><span>© <span id="year">2026</span> BoardExamTracker. All rights reserved.</span><span>This site is not affiliated with, endorsed by, or operated by the Professional Regulation Commission (PRC).</span><span id="last-updated"></span></div>
+  </footer>
+  <nav class="tab-bar" aria-label="Quick navigation"><a href="/"><i class="ph ph-house" aria-hidden="true"></i>Home</a><a href="/latest-results"><i class="ph ph-file-text" aria-hidden="true"></i>Results</a><a href="/professions"><i class="ph ph-users-three" aria-hidden="true"></i>Professions</a><a href="/blog.html" aria-current="page"><i class="ph ph-article" aria-hidden="true"></i>Blog</a></nav>
 </body>
 </html>
