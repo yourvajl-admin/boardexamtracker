@@ -81,6 +81,17 @@ test('unauthorized users cannot inspect or trigger checker controls', async () =
   assert.equal(trigger.status, 401);
 });
 
+test('latest results and professions pages are served at clean URLs', async () => {
+  const results = await request('/latest-results');
+  const professions = await request('/professions');
+  assert.equal(results.status, 200);
+  assert.match(results.data, /<link rel="canonical" href="https:\/\/www\.boardexamtracker\.com\/latest-results">/);
+  assert.match(results.data, /id="results-grid"/);
+  assert.equal(professions.status, 200);
+  assert.match(professions.data, /<link rel="canonical" href="https:\/\/www\.boardexamtracker\.com\/professions">/);
+  assert.equal((professions.data.match(/class="prof-tile"/g) || []).length, 46);
+});
+
 test('new verified results persist and appear through the existing public results API once', async () => {
   const [result] = extractResults(chemistsListingFixture);
   assert.ok(result, 'the existing PRC parser recognizes the official Chemists announcement');

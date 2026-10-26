@@ -202,6 +202,8 @@ app.get('/sitemap.xml', async (_req, res) => {
     if (!latest) latest = { results: await fetchResults({ maxPage: 0 }) };
     const urls = [
       '<url><loc>https://www.boardexamtracker.com/</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>',
+      '<url><loc>https://www.boardexamtracker.com/latest-results</loc><changefreq>hourly</changefreq><priority>0.9</priority></url>',
+      '<url><loc>https://www.boardexamtracker.com/professions</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>',
       '<url><loc>https://www.boardexamtracker.com/blog.html</loc><changefreq>daily</changefreq><priority>0.6</priority></url>',
       '<url><loc>https://www.boardexamtracker.com/privacy.html</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>',
       ...latest.results.map((item) => `<url><loc>https://www.boardexamtracker.com/results/${encodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop())}</loc><lastmod>${item.date}</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>`),
@@ -300,6 +302,8 @@ app.get('/admin', (_req, res) => {
   res.redirect(302, '/admin.html');
 });
 app.get('/blog', (_req, res) => res.redirect(302, '/blog.html'));
+app.get('/latest-results', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'latest-results.html'), { headers: { 'Cache-Control': 'no-cache, must-revalidate' } }));
+app.get('/professions', (_req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'professions.html'), { headers: { 'Cache-Control': 'no-cache, must-revalidate' } }));
 app.get('/api/admin/session', (_req, res) => {
   const config = adminConfig();
   res.json({ configured: config.configured, authenticated: config.configured && isAuthenticated(_req) });

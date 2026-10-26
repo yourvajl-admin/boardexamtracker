@@ -1,11 +1,13 @@
 const SOURCE_URL = 'https://www.prc.gov.ph/articles/exam-results';
 const PAGE_SIZE = 12;
+const HOME_CARDS = 4;
 const SEARCH_ALIASES = {
   cele: ['civil engineer', 'civil engineering'],
   mple: ['master plumber', 'master plumbers'],
   mele: ['mechanical engineer', 'mechanical engineering'],
   let: ['teacher', 'professional teachers'],
   cpa: ['certified public accountant', 'accountancy'],
+  nle: ['nurse', 'nursing'],
 };
 const RESULTS_STORAGE_KEY = 'boardexamtracker:latest-results:v1';
 function readSavedResults() {
@@ -15,11 +17,25 @@ function readSavedResults() {
     return mergeUniqueResults(saved.results).slice(0, PAGE_SIZE);
   } catch { return []; }
 }
-const state = { results: readSavedResults(), professions: [], query: new URLSearchParams(location.search).get('q')?.trim() || '', filter: 'all', profession: 'all', year: 'all', limit: PAGE_SIZE, archiveLoaded: false };
+const params = new URLSearchParams(location.search);
+const state = {
+  results: readSavedResults(),
+  professions: [],
+  query: params.get('q')?.trim() || '',
+  filter: 'all',
+  profession: params.get('profession')?.trim() || 'all',
+  year: /^\d{4}$/.test(params.get('year') || '') ? params.get('year') : 'all',
+  sort: 'newest',
+  limit: PAGE_SIZE,
+  archiveLoaded: false,
+};
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 let resultsRequestActive = false;
 let archiveRequest = null;
 let lastResultsCheck = Date.now();
+const isResultsPage = document.body.dataset.page === 'results';
+const homeGrid = document.querySelector('#latest-grid');
+const homeStatus = document.querySelector('#latest-status');
 const grid = document.querySelector('#results-grid');
 const status = document.querySelector('#result-status');
 const count = document.querySelector('#result-count');
@@ -27,18 +43,19 @@ const empty = document.querySelector('#empty-state');
 const loadMore = document.querySelector('#load-more');
 const updated = document.querySelector('#last-updated');
 const refreshCountdown = document.querySelector('#refresh-countdown');
-const professionTrack = document.querySelector('#profession-cards');
-const professionPrev = document.querySelector('#profession-prev');
-const professionNext = document.querySelector('#profession-next');
+const refreshButton = document.querySelector('#refresh-button');
+const searchInput = document.querySelector('#search-input');
+const professionFilter = document.querySelector('#profession-filter');
+const yearFilter = document.querySelector('#year-filter');
+const sortOrder = document.querySelector('#sort-order');
 const adSlot = document.querySelector('#results-ad-slot');
 const adsenseUnit = document.querySelector('#adsense-results');
 const emailAlertForm = document.querySelector('#email-alert-form');
 const emailAlertStatus = document.querySelector('#email-alert-status');
 const emailAlertStatusMessage = document.querySelector('#email-alert-status-message');
 const emailAlertAvailability = document.querySelector('#email-alert-availability');
-const emailAlertButton = emailAlertForm.querySelector('button[type="submit"]');
-const yearFilter = document.querySelector('#year-filter');
-document.querySelector('#search-input').value = state.query;
+const emailAlertButton = emailAlertForm?.querySelector('button[type="submit"]');
+if (isResultsPage) searchInput.value = state.query;
 let emailAlertsEnabled = false;
 let adsenseConfig = null;
 let adsenseScriptElement = document.querySelector('script[src^="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]');
@@ -49,12 +66,22 @@ let adsenseUnitInitialized = false;
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
-function formatDate(value) {
+function parseDate(value) {
   const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? 'Date unavailable' : new Intl.DateTimeFormat('en-PH', { year: 'numeric', month: 'long', day: 'numeric' }).format(date);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function formatDate(value, options = { year: 'numeric', month: 'long', day: 'numeric' }) {
+  const date = parseDate(value);
+  return date ? new Intl.DateTimeFormat('en-PH', options).format(date) : 'Date unavailable';
 }
 function resultSlug(item) {
   return decodeURIComponent(new URL(item.url).pathname.split('/').filter(Boolean).pop() || 'result');
+}
+function resultHref(item) {
+  return `/results/${encodeURIComponent(resultSlug(item))}`;
+}
+function resultKind(item) {
+  return /\bresults?\b/i.test(item.title) ? '<span class="badge badge-success">Results</span>' : '<span class="badge badge-new">Announcement</span>';
 }
 function mergeUniqueResults(...lists) {
   const merged = new Map();
@@ -78,13 +105,15 @@ function isRecent(date, days) {
   const age = (now - d) / 86400000;
   return age >= 0 && age < days;
 }
+function filtersActive() {
+  return state.query !== '' || state.profession !== 'all' || state.year !== 'all' || state.filter !== 'all';
+}
 function filteredResults() {
-  return state.results.filter((item) => {
-    if (state.profession !== 'all' && item.category !== state.profession) return false;
+  const matches = state.results.filter((item) => {
+    if (state.profession !== 'all' && (item.category || 'PRC Examination Result') !== state.profession) return false;
     if (state.year !== 'all' && !item.date.startsWith(`${state.year}-`)) return false;
     if (state.filter === 'week' && !isRecent(item.date, 7)) return false;
     if (state.filter === 'month' && !isRecent(item.date, 31)) return false;
-    if (state.filter === 'latest' && !isRecent(item.date, 7)) return false;
     const searchable = `${item.title} ${item.category} ${item.description || ''}`.toLowerCase();
     const terms = state.query.toLowerCase().split(/\s+/).filter(Boolean);
     return terms.every((term) => {
@@ -92,19 +121,42 @@ function filteredResults() {
       return aliases ? aliases.some((alias) => searchable.includes(alias)) : searchable.includes(term);
     });
   });
+  return state.sort === 'oldest' ? matches.reverse() : matches;
+}
+function syncUrl() {
+  const next = new URLSearchParams();
+  if (state.query) next.set('q', state.query);
+  if (state.profession !== 'all') next.set('profession', state.profession);
+  if (state.year !== 'all') next.set('year', state.year);
+  const search = next.toString();
+  history.replaceState(null, '', `${location.pathname}${search ? `?${search}` : ''}${location.hash}`);
+}
+function renderHome() {
+  if (!homeGrid) return;
+  const latest = state.results.slice(0, HOME_CARDS);
+  if (!latest.length) return;
+  homeGrid.innerHTML = latest.map((item) => `<article class="result-card"><div class="card-head"><span class="card-cat">${escapeHtml(item.category || 'PRC Examination Result')}</span>${resultKind(item)}</div><h3><a href="${resultHref(item)}">${escapeHtml(item.title)}</a></h3>${item.description ? `<p class="card-desc">${escapeHtml(item.description)}</p>` : ''}<p class="card-meta"><i class="ph ph-calendar-blank" aria-hidden="true"></i>Released <time datetime="${escapeHtml(item.date)}">${escapeHtml(formatDate(item.date, { year: 'numeric', month: 'short', day: 'numeric' }))}</time></p><div class="card-foot"><a class="text-link" href="${resultHref(item)}" aria-label="View results: ${escapeHtml(item.title)}">View results <i class="ph ph-arrow-right" aria-hidden="true"></i></a><span class="card-source">Source: prc.gov.ph</span></div></article>`).join('');
 }
 function render() {
+  if (!isResultsPage) { renderHome(); return; }
   renderYearFilter();
   const filtered = filteredResults();
   const visible = filtered.slice(0, state.limit);
-  count.textContent = `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`;
+  count.textContent = `(${filtered.length})`;
   empty.hidden = filtered.length !== 0;
   grid.hidden = filtered.length === 0;
   loadMore.hidden = (visible.length >= filtered.length && state.archiveLoaded) || state.results.length === 0;
   document.querySelector('#load-more-label').textContent = state.archiveLoaded
     ? 'Load more results'
     : state.query && filtered.length === 0 ? 'Search all results' : 'Browse older results';
-  grid.innerHTML = visible.map((item, index) => `<a class="result-card-link" href="/results/${encodeURIComponent(resultSlug(item))}" aria-label="Open details for ${escapeHtml(item.title)}"><article class="result-card result-card-open${index === 0 ? ' result-card-latest' : ''}"><div class="card-top"><span class="category-badge">${escapeHtml(item.category || 'PRC Examination Result')}</span>${index === 0 && state.filter !== 'week' && state.filter !== 'month' ? '<span class="new-badge">Latest</span>' : ''}</div><h3>${escapeHtml(item.title)}</h3><p class="card-subtitle">BoardExamTracker result brief</p>${item.description ? `<p class="card-description">${escapeHtml(item.description)}</p>` : ''}<div class="card-meta"><span>Released: <strong>${escapeHtml(formatDate(item.date))}</strong></span><span>Source: PRC.gov.ph</span></div><span class="result-card-detail-link">View result details <span aria-hidden="true">→</span></span></article></a>`).join('');
+  const newest = state.results[0]?.url;
+  grid.innerHTML = visible.map((item) => {
+    const date = parseDate(item.date);
+    const dateBlock = date
+      ? `<time class="date-block" datetime="${escapeHtml(item.date)}"><span class="m">${new Intl.DateTimeFormat('en-PH', { month: 'short' }).format(date)}</span><span class="d">${date.getDate()}</span><span class="y">${date.getFullYear()}</span></time>`
+      : '<span class="date-block"><span class="m">Date</span><span class="y">n/a</span></span>';
+    return `<article class="result-row">${dateBlock}<div class="row-body"><div class="row-badges row-meta"><span class="card-cat">${escapeHtml(item.category || 'PRC Examination Result')}</span>${resultKind(item)}${item.url === newest && state.sort === 'newest' ? '<span class="badge badge-new">Latest</span>' : ''}</div><h3><a href="${resultHref(item)}">${escapeHtml(item.title)}</a></h3>${item.description ? `<p>${escapeHtml(item.description)}</p>` : ''}<p class="card-meta row-date"><i class="ph ph-calendar-blank" aria-hidden="true"></i>Released <time datetime="${escapeHtml(item.date)}">${escapeHtml(formatDate(item.date, { year: 'numeric', month: 'short', day: 'numeric' }))}</time></p></div><div class="row-actions"><a class="btn btn-primary btn-sm" href="${resultHref(item)}" aria-label="View details: ${escapeHtml(item.title)}">View details <i class="ph ph-arrow-right" aria-hidden="true"></i></a><span class="card-source">Source: prc.gov.ph</span></div></article>`;
+  }).join('');
   updateAdSlot();
 }
 function renderYearFilter() {
@@ -120,14 +172,12 @@ function renderYearFilter() {
   yearFilter.value = state.year;
 }
 function updateAdSlot() {
+  if (!adSlot) return;
   const showAd = Boolean(adsenseConfig?.enabled)
-    && !location.pathname.startsWith('/results/')
-    && state.query === ''
-    && state.profession === 'all'
-    && state.filter === 'all'
+    && !filtersActive()
     && state.results.length >= 6;
   adSlot.hidden = !showAd;
-  if (!adsenseConfig?.clientId || location.pathname.startsWith('/results/')) return;
+  if (!adsenseConfig?.clientId) return;
   if (adsenseLibraryLoaded) {
     if (!adSlot.hidden) initializeAdUnit();
     return;
@@ -178,77 +228,53 @@ function initializeAdUnit() {
     adSlot.hidden = true;
   }
 }
-function updateProfessionSlider() {
-  const maxScroll = professionTrack.scrollWidth - professionTrack.clientWidth;
-  professionPrev.disabled = professionTrack.scrollLeft <= 2;
-  professionNext.disabled = maxScroll <= 2 || professionTrack.scrollLeft >= maxScroll - 2;
-}
-function scrollProfessionCards(direction, distance = 0.8) {
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  professionTrack.scrollBy({ left: direction * professionTrack.clientWidth * distance, behavior: reducedMotion ? 'auto' : 'smooth' });
-}
-function renderProfessionCards() {
-  const resultCounts = state.results.reduce((counts, result) => {
-    const category = result.category || 'PRC Examination Result';
-    counts.set(category, (counts.get(category) || 0) + 1);
-    return counts;
-  }, new Map());
-  const categories = state.professions.length
-    ? state.professions
-    : [...new Set(state.results.map((result) => result.category).filter(Boolean))].sort();
-  const colorClasses = ['', 'mint', 'gold', 'lilac', 'rose', 'sky'];
-  professionTrack.innerHTML = categories.map((category, index) => {
-    const count = resultCounts.get(category) || 0;
-    const initials = category.split(/\s+/).filter((word) => !['and', 'of', 'the'].includes(word.toLowerCase())).slice(0, 2).map((word) => word[0]).join('').toUpperCase();
-    const countLabel = state.archiveLoaded && count ? `<small class="profession-result-count">${count} ${count === 1 ? 'result' : 'results'} available</small>` : '';
-    return `<a class="profession-card" href="#latest" data-profession-search="${escapeHtml(category)}" role="listitem" aria-label="Browse ${escapeHtml(category)} results${state.archiveLoaded && count ? `, ${count} available` : ''}"><span class="prof-symbol ${colorClasses[index % colorClasses.length]}">${escapeHtml(initials)}</span><b>${escapeHtml(category)}</b><small>Licensure exam results</small>${countLabel}<span class="profession-card-cta">View results <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></span></span><span class="card-arrow" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></span></a>`;
-  }).join('');
-  requestAnimationFrame(updateProfessionSlider);
-}
 function renderProfessionFilter(professions) {
+  if (!professionFilter) return;
   const countsByProfession = state.results.reduce((counts, item) => {
     const category = item.category || 'PRC Examination Result';
     counts.set(category, (counts.get(category) || 0) + 1);
     return counts;
   }, new Map());
-  const names = Array.isArray(professions) ? [...professions] : [...countsByProfession.keys()].filter((name) => name !== 'PRC Examination Result').sort();
+  const names = Array.isArray(professions) && professions.length ? [...professions] : [...countsByProfession.keys()].filter((name) => name !== 'PRC Examination Result').sort();
   if (countsByProfession.has('PRC Examination Result')) names.push('PRC Examination Result');
-  const select = document.querySelector('#profession-filter');
-  const previous = select.value;
-  select.innerHTML = '<option value="all">All professions</option>' + names.map((name) => {
+  professionFilter.innerHTML = '<option value="all">All professions</option>' + names.map((name) => {
     const resultCount = countsByProfession.get(name) || 0;
     const label = state.archiveLoaded
       ? resultCount ? `${name} (${resultCount})` : `${name} — no results`
-      : resultCount ? name : `${name} — check older results`;
-    return `<option value="${escapeHtml(name)}"${state.archiveLoaded && !resultCount ? ' disabled' : ''}>${escapeHtml(label)}</option>`;
+      : name;
+    return `<option value="${escapeHtml(name)}"${state.archiveLoaded && !resultCount && name !== state.profession ? ' disabled' : ''}>${escapeHtml(label)}</option>`;
   }).join('');
-  if (names.includes(previous)) select.value = previous;
+  professionFilter.value = names.includes(state.profession) ? state.profession : 'all';
 }
-function setNotice(message, kind = '') { status.textContent = message; status.className = `status-message ${kind}`; status.hidden = !message; }
+function setNotice(message, kind = '') {
+  const target = isResultsPage ? status : homeStatus;
+  if (!target) return;
+  target.textContent = message;
+  target.className = `status-message ${kind}`;
+  target.hidden = !message;
+}
 function updateRefreshCountdown() {
-  if (resultsRequestActive) {
-    refreshCountdown.textContent = 'Checking for new results…';
-    return;
-  }
   const secondsLeft = Math.max(0, Math.ceil((AUTO_REFRESH_MS - (Date.now() - lastResultsCheck)) / 1000));
-  if (secondsLeft === 0) {
-    refreshCountdown.textContent = 'Checking now…';
-    if (!document.hidden) loadResults();
+  if (!resultsRequestActive && secondsLeft === 0 && !document.hidden) loadResults();
+  if (!refreshCountdown) return;
+  if (resultsRequestActive || secondsLeft === 0) {
+    refreshCountdown.textContent = 'Checking for new results…';
     return;
   }
   const minutes = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
   const seconds = String(secondsLeft % 60).padStart(2, '0');
   refreshCountdown.textContent = `Next automatic check in ${minutes}:${seconds}`;
 }
+function setLastUpdated(prefix, value) {
+  if (updated && value) updated.textContent = `${prefix}: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))}`;
+}
 async function loadResults(refresh = false) {
   if (resultsRequestActive) return;
   resultsRequestActive = true;
   updateRefreshCountdown();
-  const button = document.querySelector('#refresh-button');
-  button.disabled = true;
-  button.querySelector('span').innerHTML = '<svg class="ui-icon refresh-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 1-2.3-5.7L20 9"/></svg>';
-  grid.setAttribute('aria-busy', 'true');
-  if (!state.results.length) count.textContent = 'Loading results…';
+  if (refreshButton) refreshButton.disabled = true;
+  (grid || homeGrid)?.setAttribute('aria-busy', 'true');
+  if (!state.results.length && count) count.textContent = '(loading…)';
   try {
     const response = await fetch(`/api/results${refresh ? '?refresh=true' : ''}`, { headers: { Accept: 'application/json' } });
     const data = await response.json();
@@ -263,17 +289,20 @@ async function loadResults(refresh = false) {
     }
     try { localStorage.setItem(RESULTS_STORAGE_KEY, JSON.stringify({ results: state.results.slice(0, PAGE_SIZE) })); } catch { /* Storage is optional. */ }
     renderProfessionFilter(data.professions);
-    updated.textContent = `Last checked: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
+    setLastUpdated('Last checked', data.lastUpdated);
     setNotice(data.stale ? 'Showing the latest cached results.' : data.warning || '');
-    renderProfessionCards();
     render();
   } catch (error) {
-    renderProfessionCards();
     setNotice("We're having trouble connecting to the official PRC website. Please try again later. Visit PRC.gov.ph for current announcements.", 'error');
-    if (state.results.length) render(); else { count.textContent = 'Results unavailable'; grid.innerHTML = `<div class="unavailable"><strong>Unable to retrieve the latest PRC results.</strong><br><a href="${SOURCE_URL}" target="_blank" rel="noopener noreferrer">Visit PRC.gov.ph <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a></div>`; }
+    const target = grid || homeGrid;
+    if (state.results.length) render();
+    else if (target) {
+      if (count) count.textContent = '(unavailable)';
+      target.innerHTML = `<div class="unavailable"><strong>Unable to retrieve the latest PRC results.</strong><br><a href="${SOURCE_URL}" target="_blank" rel="noopener noreferrer">Visit PRC.gov.ph <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a></div>`;
+    }
   } finally {
-    button.disabled = false;
-    grid.setAttribute('aria-busy', 'false');
+    if (refreshButton) refreshButton.disabled = false;
+    (grid || homeGrid)?.setAttribute('aria-busy', 'false');
     lastResultsCheck = Date.now();
     resultsRequestActive = false;
     updateRefreshCountdown();
@@ -284,7 +313,7 @@ async function loadArchiveResults() {
   if (state.archiveLoaded) return state.results;
   if (archiveRequest) return archiveRequest;
   archiveRequest = (async () => {
-    grid.setAttribute('aria-busy', 'true');
+    grid?.setAttribute('aria-busy', 'true');
     try {
       const response = await fetch('/api/results?archive=true', { headers: { Accept: 'application/json' } });
       const data = await response.json();
@@ -293,176 +322,172 @@ async function loadArchiveResults() {
       state.archiveLoaded = true;
       if (Array.isArray(data.professions)) state.professions = data.professions;
       renderProfessionFilter(state.professions);
-      updated.textContent = `Last updated: ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.lastUpdated))}`;
-      renderProfessionCards();
-      if (!location.pathname.startsWith('/results/')) render();
+      setLastUpdated('Last updated', data.lastUpdated);
+      render();
       return state.results;
     } finally {
-      grid.setAttribute('aria-busy', 'false');
+      grid?.setAttribute('aria-busy', 'false');
       archiveRequest = null;
     }
   })();
   return archiveRequest;
 }
-
-document.querySelector('#search-input').addEventListener('input', (event) => { state.query = event.target.value.trim(); state.limit = PAGE_SIZE; render(); });
-document.querySelector('#search').addEventListener('submit', (event) => { event.preventDefault(); document.querySelector('#latest').scrollIntoView({ behavior: 'smooth' }); });
-document.querySelector('#filters').addEventListener('click', async (event) => {
-  const button = event.target.closest('[data-filter]');
-  if (!button) return;
-  document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button));
-  state.filter = button.dataset.filter;
-  state.limit = PAGE_SIZE;
-  render();
-  if (state.filter === 'all' && !state.archiveLoaded) {
-    try {
-      await loadArchiveResults();
-      setNotice('The complete available PRC results archive is loaded.');
-    } catch (error) {
-      setNotice(error.message, 'error');
-    }
-  }
-});
-document.querySelector('#profession-filter').addEventListener('change', (event) => { state.profession = event.target.value; state.limit = PAGE_SIZE; render(); });
-yearFilter.addEventListener('change', (event) => { state.year = event.target.value; state.limit = PAGE_SIZE; state.filter = 'all'; document.querySelectorAll('.filter').forEach((button) => button.classList.toggle('active', button.dataset.filter === 'all')); render(); });
-document.querySelector('#refresh-button').addEventListener('click', () => loadResults(true));
-const disclaimerDialog = document.querySelector('#disclaimer-dialog');
-document.querySelector('#open-disclaimer').addEventListener('click', () => disclaimerDialog.showModal());
-document.querySelector('#disclaimer-close').addEventListener('click', () => disclaimerDialog.close());
-disclaimerDialog.addEventListener('click', (event) => { if (event.target === disclaimerDialog) disclaimerDialog.close(); });
-loadMore.addEventListener('click', async () => {
-  if (!state.archiveLoaded) {
-    loadMore.disabled = true;
-    document.querySelector('#load-more-label').textContent = 'Loading older results…';
-    try {
-      await loadArchiveResults();
-      state.limit += PAGE_SIZE;
-      setNotice('Older results are now available.');
-    } catch (error) {
-      setNotice(error.message, 'error');
-    } finally {
-      loadMore.disabled = false;
-    }
-  } else {
-    state.limit += PAGE_SIZE;
-  }
-  render();
-});
-document.querySelector('#clear-search').addEventListener('click', () => { state.query = ''; state.filter = 'all'; state.profession = 'all'; state.year = 'all'; state.limit = PAGE_SIZE; document.querySelector('#search-input').value = ''; document.querySelector('#profession-filter').value = 'all'; yearFilter.value = 'all'; document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item.dataset.filter === 'all')); render(); });
-document.querySelectorAll('[data-search]').forEach((link) => link.addEventListener('click', () => { const term = link.dataset.search; document.querySelector('#search-input').value = term; state.query = term; state.limit = PAGE_SIZE; render(); }));
-professionTrack.addEventListener('click', (event) => {
-  const link = event.target.closest('[data-profession-search]');
-  if (!link) return;
-  event.preventDefault();
-  state.query = link.dataset.professionSearch;
-  state.profession = 'all';
-  state.filter = 'all';
-  state.limit = PAGE_SIZE;
-  document.querySelector('#search-input').value = state.query;
-  document.querySelector('#profession-filter').value = 'all';
-  document.querySelectorAll('.filter').forEach((button) => button.classList.toggle('active', button.dataset.filter === 'all'));
-  render();
-  document.querySelector('#latest').scrollIntoView({ behavior: 'smooth' });
-});
-professionPrev.addEventListener('click', () => scrollProfessionCards(-1));
-professionNext.addEventListener('click', () => scrollProfessionCards(1));
-professionTrack.addEventListener('scroll', updateProfessionSlider, { passive: true });
-professionTrack.addEventListener('keydown', (event) => {
-  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    scrollProfessionCards(event.key === 'ArrowRight' ? 1 : -1, 0.7);
-  }
-});
-window.addEventListener('resize', updateProfessionSlider);
-const menuToggle = document.querySelector('.menu-toggle');
-menuToggle.addEventListener('click', () => { const open = menuToggle.getAttribute('aria-expanded') !== 'true'; menuToggle.setAttribute('aria-expanded', String(open)); menuToggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation'); document.querySelector('#primary-nav').classList.toggle('open', open); });
-document.querySelectorAll('#primary-nav a').forEach((link) => link.addEventListener('click', () => { menuToggle.setAttribute('aria-expanded', 'false'); document.querySelector('#primary-nav').classList.remove('open'); }));
-if (location.pathname.startsWith('/results/')) {
-  document.addEventListener('click', (event) => {
-    const anchor = event.target.closest('a[href^="#"]');
-    if (!anchor) return;
-    event.preventDefault();
-    location.href = `/${anchor.getAttribute('href')}`;
-  });
-}
-document.querySelector('#year').textContent = new Date().getFullYear();
-document.querySelector('.floating-email-cta').addEventListener('click', (event) => {
-  if (!['/', '/index.html'].includes(location.pathname)) return;
-  const section = document.querySelector('#email-alert-section');
-  if (!section) return;
-  event.preventDefault();
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  section.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
-  history.replaceState(null, '', '/#email-alert-section');
-});
-fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
-  .then((response) => response.json())
-  .then((data) => {
-    emailAlertsEnabled = Boolean(data.available);
-    emailAlertButton.disabled = !emailAlertsEnabled;
-    emailAlertAvailability.textContent = data.available
-      ? 'You’ll receive a confirmation email before alerts begin. Unsubscribe from any alert email.'
-      : data.reason === 'storage'
-        ? 'Email alerts are temporarily unavailable while secure subscriber storage is being configured.'
-        : 'Email alerts are not configured on this server yet.';
-  })
-  .catch(() => {
-    emailAlertsEnabled = false;
-    emailAlertButton.disabled = true;
-    emailAlertAvailability.textContent = 'Email alert availability could not be checked. Please try again later.';
-  });
-async function refreshAdSenseConfig() {
+async function ensureArchive(message) {
   try {
-    const response = await fetch('/api/adsense-config', { headers: { Accept: 'application/json' }, cache: 'no-store' });
-    if (!response.ok) throw new Error('Ad setting unavailable.');
-    adsenseConfig = await response.json();
-  } catch {
-    adsenseConfig = { enabled: false };
-  }
-  updateAdSlot();
-}
-refreshAdSenseConfig();
-window.setInterval(() => {
-  if (!document.hidden && !location.pathname.startsWith('/results/')) refreshAdSenseConfig();
-}, 30_000);
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !location.pathname.startsWith('/results/')) refreshAdSenseConfig();
-});
-emailAlertForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const buttonText = emailAlertButton.innerHTML;
-  emailAlertButton.disabled = true;
-  emailAlertButton.textContent = 'Sending confirmation…';
-  emailAlertStatus.hidden = true;
-  emailAlertStatusMessage.textContent = '';
-  emailAlertAvailability.textContent = '';
-  const email = document.querySelector('#alert-email').value.trim();
-  try {
-    const response = await fetch('/api/notifications/subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not request email alerts.');
-    emailAlertStatusMessage.textContent = `We sent a confirmation email to ${email}. Open it and click “Confirm subscription” to start receiving alerts.`;
-    emailAlertStatus.hidden = false;
-    emailAlertForm.reset();
+    await loadArchiveResults();
+    if (message) setNotice(message);
   } catch (error) {
-    emailAlertAvailability.textContent = error.message;
-  } finally {
-    emailAlertButton.innerHTML = buttonText;
-    emailAlertButton.disabled = !emailAlertsEnabled;
+    setNotice(error.message, 'error');
   }
-});
-document.querySelector('#email-alert-status-close').addEventListener('click', () => {
-  emailAlertStatus.hidden = true;
-});
-if (state.results.length) {
-  updated.textContent = 'Showing saved latest results while checking for updates…';
-  renderProfessionCards();
+}
+function setQuickFilter(value) {
+  state.filter = value;
+  document.querySelectorAll('.filter').forEach((item) => {
+    const active = item.dataset.filter === value;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+}
+function resetFilters() {
+  state.query = '';
+  state.profession = 'all';
+  state.year = 'all';
+  state.limit = PAGE_SIZE;
+  setQuickFilter('all');
+  searchInput.value = '';
+  professionFilter.value = 'all';
+  yearFilter.value = 'all';
+  syncUrl();
   render();
 }
-loadResults();
+
+if (isResultsPage) {
+  searchInput.addEventListener('input', (event) => { state.query = event.target.value.trim(); state.limit = PAGE_SIZE; syncUrl(); render(); });
+  document.querySelector('#search').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (state.query && !state.archiveLoaded) ensureArchive();
+    document.querySelector('.results-main').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  });
+  document.querySelector('#filters').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-filter]');
+    if (!button) return;
+    setQuickFilter(button.dataset.filter);
+    state.limit = PAGE_SIZE;
+    render();
+  });
+  professionFilter.addEventListener('change', (event) => {
+    state.profession = event.target.value;
+    state.limit = PAGE_SIZE;
+    syncUrl();
+    render();
+    if (state.profession !== 'all' && !state.archiveLoaded) ensureArchive();
+  });
+  yearFilter.addEventListener('change', (event) => { state.year = event.target.value; state.limit = PAGE_SIZE; setQuickFilter('all'); syncUrl(); render(); });
+  sortOrder.addEventListener('change', async (event) => {
+    state.sort = event.target.value;
+    state.limit = PAGE_SIZE;
+    render();
+    if (state.sort === 'oldest' && !state.archiveLoaded) await ensureArchive('The complete available PRC results archive is loaded.');
+  });
+  refreshButton.addEventListener('click', () => loadResults(true));
+  document.querySelector('#clear-search').addEventListener('click', resetFilters);
+  document.querySelector('#clear-filters').addEventListener('click', resetFilters);
+  loadMore.addEventListener('click', async () => {
+    if (!state.archiveLoaded) {
+      loadMore.disabled = true;
+      document.querySelector('#load-more-label').textContent = 'Loading older results…';
+      try {
+        await loadArchiveResults();
+        state.limit += PAGE_SIZE;
+        setNotice('Older results are now available.');
+      } catch (error) {
+        setNotice(error.message, 'error');
+      } finally {
+        loadMore.disabled = false;
+      }
+    } else {
+      state.limit += PAGE_SIZE;
+    }
+    render();
+  });
+  renderProfessionFilter(state.professions);
+}
+
+if (emailAlertForm) {
+  fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
+    .then((response) => response.json())
+    .then((data) => {
+      emailAlertsEnabled = Boolean(data.available);
+      emailAlertButton.disabled = !emailAlertsEnabled;
+      emailAlertAvailability.textContent = data.available
+        ? 'You’ll receive a confirmation email before alerts begin. Unsubscribe from any alert email.'
+        : data.reason === 'storage'
+          ? 'Email alerts are temporarily unavailable while secure subscriber storage is being configured.'
+          : 'Email alerts are not configured on this server yet.';
+    })
+    .catch(() => {
+      emailAlertsEnabled = false;
+      emailAlertButton.disabled = true;
+      emailAlertAvailability.textContent = 'Email alert availability could not be checked. Please try again later.';
+    });
+  emailAlertForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const buttonText = emailAlertButton.innerHTML;
+    emailAlertButton.disabled = true;
+    emailAlertButton.textContent = 'Sending confirmation…';
+    emailAlertStatus.hidden = true;
+    emailAlertStatusMessage.textContent = '';
+    emailAlertAvailability.textContent = '';
+    const email = document.querySelector('#alert-email').value.trim();
+    try {
+      const response = await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not request email alerts.');
+      emailAlertStatusMessage.textContent = /already subscribed/i.test(data.message || '')
+        ? `${email} is already subscribed to result alerts.`
+        : `We sent a confirmation email to ${email}. Open it and click “Confirm subscription” to start receiving alerts.`;
+      emailAlertStatus.hidden = false;
+      emailAlertForm.reset();
+    } catch (error) {
+      emailAlertAvailability.textContent = error.message;
+    } finally {
+      emailAlertButton.innerHTML = buttonText;
+      emailAlertButton.disabled = !emailAlertsEnabled;
+    }
+  });
+  document.querySelector('#email-alert-status-close').addEventListener('click', () => {
+    emailAlertStatus.hidden = true;
+  });
+}
+
+if (adSlot) {
+  async function refreshAdSenseConfig() {
+    try {
+      const response = await fetch('/api/adsense-config', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+      if (!response.ok) throw new Error('Ad setting unavailable.');
+      adsenseConfig = await response.json();
+    } catch {
+      adsenseConfig = { enabled: false };
+    }
+    updateAdSlot();
+  }
+  refreshAdSenseConfig();
+  window.setInterval(() => { if (!document.hidden) refreshAdSenseConfig(); }, 30_000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshAdSenseConfig(); });
+}
+
+if (state.results.length) {
+  if (updated) updated.textContent = 'Showing saved latest results while checking for updates…';
+  render();
+}
+loadResults().then(() => {
+  // Profession, year and older searches need the full archive; load it straight away for shared links.
+  if (isResultsPage && (state.profession !== 'all' || state.year !== 'all' || state.query)) ensureArchive();
+});
 setInterval(updateRefreshCountdown, 1000);
 document.addEventListener('visibilitychange', () => {
   updateRefreshCountdown();
