@@ -30,6 +30,7 @@ const app = express();
 const port = Number(process.env.PORT) || 3000;
 const AUTO_REFRESH_MS = 5 * 60 * 1000;
 const INITIAL_RESULTS_LIMIT = 12;
+const PERSISTENT_RESULT_SYNC_MS = 5 * 1000;
 let sharp;
 let shareFonts;
 const KNOWN_RESULTS_KEY = 'boardexamtracker:known-results';
@@ -46,6 +47,8 @@ const BLOG_PHOTO_LIMIT_BYTES = 1_000_000;
 const ANNOUNCEMENT_CACHE_KEY_PREFIX = 'boardexamtracker:announcement-links:v1:';
 let pendingFetch = null;
 let pendingArchiveFetch = null;
+let pendingPersistentResultRestore = null;
+let lastPersistentResultRestoreAt = 0;
 let archiveCacheLoaded = false;
 const announcementCache = new Map();
 let recentResultIndex = null;
@@ -610,25 +613,34 @@ function mergeResultLists(...lists) {
 }
 
 async function restorePersistentResultCache() {
-  if (getCache() || !isPersistentStorageConfigured()) return getCache();
-  try {
-    const saved = await redisCommand('GET', RESULTS_CACHE_KEY);
-    let snapshot = {};
-    if (typeof saved === 'string') {
-      try { snapshot = JSON.parse(saved); } catch { snapshot = {}; }
-    }
-    const indexedAnnouncements = await loadPublishedAnnouncements(redisCommand);
-    const snapshotResults = Array.isArray(snapshot.results) ? snapshot.results : [];
-    const results = mergeResultLists(snapshotResults, indexedAnnouncements);
-    if (!results.length) return null;
-    const fetchedAt = Number.isFinite(snapshot.fetchedAt) ? snapshot.fetchedAt : Date.now();
-    const restored = setCache(results, fetchedAt);
-    if (snapshot.archiveLoaded === true) archiveCacheLoaded = true;
-    return restored;
-  } catch (error) {
-    console.warn('Could not restore shared result cache:', error.message);
-    return null;
+  if (!isPersistentStorageConfigured()) return getCache();
+  if (getCache() && Date.now() - lastPersistentResultRestoreAt < PERSISTENT_RESULT_SYNC_MS) return getCache();
+  if (!pendingPersistentResultRestore) {
+    pendingPersistentResultRestore = (async () => {
+      try {
+        const saved = await redisCommand('GET', RESULTS_CACHE_KEY);
+        let snapshot = {};
+        if (typeof saved === 'string') {
+          try { snapshot = JSON.parse(saved); } catch { snapshot = {}; }
+        }
+        const indexedAnnouncements = await loadPublishedAnnouncements(redisCommand);
+        const snapshotResults = Array.isArray(snapshot.results) ? snapshot.results : [];
+        const results = mergeResultLists(getCache()?.results || [], snapshotResults, indexedAnnouncements);
+        if (!results.length) return getCache() || null;
+        const fetchedAt = Math.max(getCache()?.fetchedAt || 0, Number.isFinite(snapshot.fetchedAt) ? snapshot.fetchedAt : 0) || Date.now();
+        const restored = setCache(results, fetchedAt);
+        if (snapshot.archiveLoaded === true) archiveCacheLoaded = true;
+        lastPersistentResultRestoreAt = Date.now();
+        return restored;
+      } catch (error) {
+        console.warn('Could not restore shared result cache:', error.message);
+        return getCache() || null;
+      } finally {
+        pendingPersistentResultRestore = null;
+      }
+    })();
   }
+  return pendingPersistentResultRestore;
 }
 
 async function persistResultCache(results, fetchedAt = Date.now(), archiveLoaded = archiveCacheLoaded) {
@@ -1166,7 +1178,7 @@ app.get('/api/results', async (req, res) => {
   const force = req.query.refresh === 'true';
   res.set('Cache-Control', force
     ? 'no-store'
-    : 'public, max-age=0, s-maxage=30, stale-while-revalidate=30');
+    : 'public, max-age=0, s-maxage=5, stale-while-revalidate=10');
   if (req.query.archive === 'true') {
     try {
       const value = await loadArchiveResults();

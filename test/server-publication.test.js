@@ -94,7 +94,7 @@ test('latest results and professions pages are served at clean URLs', async () =
 
 test('public result responses use a short edge cache', async () => {
   const cached = await request('/api/results');
-  assert.match(cached.headers['cache-control'], /s-maxage=30/);
+  assert.match(cached.headers['cache-control'], /s-maxage=5/);
 });
 
 test('new verified results persist and appear through the existing public results API once', async () => {
