@@ -49,7 +49,7 @@ function request(path, { method = 'GET', headers = {}, body } = {}) {
       res.on('end', () => {
         let data;
         try { data = JSON.parse(text); } catch { data = text; }
-        resolve({ status: res.statusCode, data });
+        resolve({ status: res.statusCode, headers: res.headers, data });
       });
     });
     req.on('error', reject);
@@ -90,6 +90,11 @@ test('latest results and professions pages are served at clean URLs', async () =
   assert.equal(professions.status, 200);
   assert.match(professions.data, /<link rel="canonical" href="https:\/\/www\.boardexamtracker\.com\/professions">/);
   assert.equal((professions.data.match(/class="prof-tile"/g) || []).length, 46);
+});
+
+test('public result responses use a short edge cache', async () => {
+  const cached = await request('/api/results');
+  assert.match(cached.headers['cache-control'], /s-maxage=30/);
 });
 
 test('new verified results persist and appear through the existing public results API once', async () => {

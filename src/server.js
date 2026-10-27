@@ -1160,6 +1160,13 @@ app.post('/api/email/unsubscribe', express.urlencoded({ extended: false, limit: 
 });
 
 app.get('/api/results', async (req, res) => {
+  // Results are already validated and stored before this endpoint serves them.
+  // A brief edge cache avoids a Redis round trip for every visitor without
+  // materially delaying newly published announcements.
+  const force = req.query.refresh === 'true';
+  res.set('Cache-Control', force
+    ? 'no-store'
+    : 'public, max-age=0, s-maxage=30, stale-while-revalidate=30');
   if (req.query.archive === 'true') {
     try {
       const value = await loadArchiveResults();
@@ -1171,7 +1178,6 @@ app.get('/api/results', async (req, res) => {
       return res.status(503).json({ results: [], professions: PROFESSION_CATEGORIES, lastUpdated: null, cached: false, archiveLoaded: false, stale: false, source: SOURCE_URL, error: 'Unable to retrieve older PRC results.', message: error.message });
     }
   }
-  const force = req.query.refresh === 'true';
   if (!force) {
     await restorePersistentResultCache();
     restoreBundledResultCache();
