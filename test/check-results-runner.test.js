@@ -16,6 +16,17 @@ test('the bundled announcement fallback includes the recent Metallurgical Engine
   assert.match(entry.details.summary, /36 of 42/);
 });
 
+test('the bundled archive fallback includes the older Radiologic Technologists result files and details', () => {
+  const url = 'https://www.prc.gov.ph/article/may-2026-radiologic-technologists-special-professional-licensure-examination-results';
+  const entry = fallbackAnnouncementLinks[url];
+  assert.ok(entry, 'expected the archive fallback to include the older Radiologic Technologists announcement');
+  assert.equal(entry.resources.length, 2);
+  assert.match(entry.resources[0].url, /drive\.google\.com\/file\/d\//);
+  assert.match(entry.details.summary, /none passed out of 2 examinees/);
+  assert.equal(entry.details.source, 'prc');
+  assert.equal(entry.details.version, 2);
+});
+
 test('the scheduled runner triggers a live deploy hook after publishing a new result', async () => {
   const previousHook = process.env.VERCEL_DEPLOY_HOOK_URL;
   process.env.VERCEL_DEPLOY_HOOK_URL = 'https://example.vercel.app/api/deploy';
