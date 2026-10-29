@@ -1,5 +1,12 @@
 // Shared header, footer and small page widgets used on every public page.
 (() => {
+  const emailAlertButton = document.createElement('a');
+  emailAlertButton.className = 'floating-email-cta';
+  emailAlertButton.href = document.querySelector('#email-alert-section') ? '#email-alert-section' : '/#email-alert-section';
+  emailAlertButton.setAttribute('aria-label', 'Get email alerts');
+  emailAlertButton.innerHTML = '<i class="ph ph-bell" aria-hidden="true"></i><span>Get email alerts</span>';
+  document.body.append(emailAlertButton);
+
   // Desktop header: the Professions dropdown. Phones and tablets use the bottom tab bar instead.
   document.querySelectorAll('.nav-drop').forEach((drop) => {
     const button = drop.querySelector('button');

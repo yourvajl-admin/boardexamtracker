@@ -71,6 +71,15 @@ h1, h2, h3 { font-family: var(--display); color: var(--ink); font-weight: 700; l
 .text-link { display: inline-flex; align-items: center; gap: 6px; color: var(--blue-text); font-weight: 700; font-size: 14px; }
 .text-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
+/* Floating email-alert call to action */
+.floating-email-cta { position: fixed; z-index: 45; right: max(20px, env(safe-area-inset-right)); bottom: calc(20px + var(--tabbar-h) + env(safe-area-inset-bottom)); display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 50px; padding: 0 18px; border: 1px solid rgba(164, 208, 255, 0.8); border-radius: 999px; background: linear-gradient(135deg, #1685ff, #0758d9); box-shadow: 0 0 0 1px rgba(8, 108, 244, 0.22), 0 0 18px rgba(8, 108, 244, 0.6), 0 8px 26px rgba(10, 45, 89, 0.28); color: #fff; font-size: 14px; font-weight: 700; white-space: nowrap; animation: email-alert-glow 2.8s ease-in-out infinite; }
+.floating-email-cta .ph { font-size: 19px; }
+.floating-email-cta:hover { transform: translateY(-2px); box-shadow: 0 0 0 2px rgba(8, 108, 244, 0.2), 0 0 26px rgba(8, 108, 244, 0.8), 0 10px 30px rgba(10, 45, 89, 0.32); }
+.floating-email-cta:focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; }
+@keyframes email-alert-glow { 0%, 100% { box-shadow: 0 0 0 1px rgba(8, 108, 244, 0.22), 0 0 14px rgba(8, 108, 244, 0.48), 0 8px 26px rgba(10, 45, 89, 0.28); } 50% { box-shadow: 0 0 0 2px rgba(8, 108, 244, 0.3), 0 0 25px rgba(8, 108, 244, 0.8), 0 8px 28px rgba(10, 45, 89, 0.3); } }
+@media (max-width: 480px) { .floating-email-cta { right: max(12px, env(safe-area-inset-right)); min-height: 48px; padding-inline: 16px; font-size: 13px; } }
+@media (prefers-reduced-motion: reduce) { .floating-email-cta { animation: none; transition: none; } }
+
 /* Header */
 .site-top { position: sticky; top: 0; z-index: 40; background: var(--header-bg); backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--line); }
 .top-inner { display: flex; align-items: center; gap: 20px; height: var(--head-h); }
