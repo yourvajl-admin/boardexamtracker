@@ -39,8 +39,8 @@ const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const RESULTS_CHECK_STATUS_KEY = 'boardexamtracker:results-check-status:v1';
 const RESULTS_SCAN_CURSOR_KEY = 'boardexamtracker:results-scan-cursor:v1';
 const ANNOUNCEMENT_BACKFILL_CURSOR_KEY = 'boardexamtracker:announcement-links:backfill-cursor:v1';
-const ANNOUNCEMENT_BACKFILL_BATCH_SIZE = 6;
-const ANNOUNCEMENT_BACKFILL_SCAN_SIZE = 24;
+const ANNOUNCEMENT_BACKFILL_BATCH_SIZE = 12;
+const ANNOUNCEMENT_BACKFILL_SCAN_SIZE = 60;
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
 const BLOG_POSTS_KEY = 'boardexamtracker:blog:posts';
 const BLOG_POST_INDEX_KEY = 'boardexamtracker:blog:index';
@@ -70,6 +70,11 @@ function hasVerifiedAnnouncementDetails(details) {
     && details.version === 2
     && typeof details.summary === 'string'
     && Array.isArray(details.facts);
+}
+
+function hasCompleteAnnouncementLinks(value) {
+  return hasVerifiedAnnouncementDetails(value?.details)
+    && (value.linksVerified === true || value.resources?.length > 0);
 }
 
 function preferBundledDetails(cached, bundled) {
@@ -1316,12 +1321,12 @@ app.post('/api/cron/announcement-link-backfill', async (req, res) => {
     for (let index = 0; index < candidates.length; index += 1) {
       scanned = index + 1;
       const articleUrl = candidates[index].url;
-      let cachedDetails = null;
+      let cachedAnnouncement = null;
       if (typeof cachedValues?.[index] === 'string') {
-        try { cachedDetails = JSON.parse(cachedValues[index])?.details; } catch { cachedDetails = null; }
+        try { cachedAnnouncement = JSON.parse(cachedValues[index]); } catch { cachedAnnouncement = null; }
       }
-      if (!hasVerifiedAnnouncementDetails(cachedDetails)
-        && !hasVerifiedAnnouncementDetails(findBundledAnnouncement(articleUrl)?.details)) {
+      if (!hasCompleteAnnouncementLinks(cachedAnnouncement)
+        && !hasCompleteAnnouncementLinks(findBundledAnnouncement(articleUrl))) {
         urls.push(articleUrl);
         if (urls.length >= ANNOUNCEMENT_BACKFILL_BATCH_SIZE) break;
       }
@@ -1365,6 +1370,7 @@ app.post('/api/cron/cache-announcement-links', async (req, res) => {
         source: entry.details.source === 'prc' && entry.details.version === 2 ? 'prc' : '',
         version: entry.details.source === 'prc' && entry.details.version === 2 ? 2 : 1,
       } : { summary: '', facts: [] },
+      linksVerified: entry.details?.source === 'prc' && entry.details.version === 2,
     });
     if (!persisted) return res.status(503).json({ error: 'Could not persist the PRC announcement files. The new result will be retried before publication.' });
     await attachAnnouncementDocuments(articleUrl, resources, redisCommand);

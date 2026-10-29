@@ -10,4 +10,4 @@ PRC_PAGE_DELAY_MS = "350"
 SITE_CRON_URL = "https://www.boardexamtracker.com/api/cron/check-results"
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]

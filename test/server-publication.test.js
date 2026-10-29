@@ -154,12 +154,12 @@ test('announcement backfill rotates through the complete saved results archive',
   });
   const first = await invoke();
   assert.equal(first.status, 200);
-  assert.equal(first.data.urls.length, 6);
+  assert.equal(first.data.urls.length, 12);
   assert.ok(first.data.urls.every((url) => /^https:\/\/www\.prc\.gov\.ph\/(?:article|node)\//.test(url)));
 
   const second = await invoke();
   assert.equal(second.status, 200);
-  assert.equal(second.data.urls.length, 6);
+  assert.equal(second.data.urls.length, 12);
   assert.equal(second.data.urls.some((url) => first.data.urls.includes(url)), false);
   values.delete('boardexamtracker:results-check-lock');
 });

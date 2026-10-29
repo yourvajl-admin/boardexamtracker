@@ -1,13 +1,12 @@
 const cheerio = require('cheerio');
 const { extractAnnouncementDetails } = require('../src/announcement-details');
 const { categorize } = require('../src/professions');
+const { extractResources } = require('./prc-resources');
 const { fetchPrcPage } = require('./prc-fetch');
 
 const PRC_URL = 'https://www.prc.gov.ph/articles/exam-results';
 const PRC_HOSTS = ['www.prc.gov.ph', 'prc.gov.ph'];
 const RESULT_TERMS = /\b(result|results|licensure examination|board examination|examination result)\b/i;
-const RESOURCE_TERMS = /(full text of (?:the )?official result|official result|performance of (?:the )?schools|successful examinees|list of (?:the )?examinees|list of successful|top\s*10|highest places|result document|examinees list)/i;
-
 function parseDate(value) {
   const text = String(value || '').replace(/\s+/g, ' ');
   const iso = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
@@ -77,25 +76,6 @@ function summarize(title, description) {
   const passed = text.match(/([\d,]+)\s+out of\s+([\d,]+)\s+passed the\s+(.+?)(?:\s+given by|\s+in\s+\d+\s+testing centers|\.|$)/i);
   if (passed) return `${passed[1]} of ${passed[2]} candidates passed the ${passed[3].trim()} exam.`;
   return text.slice(0, 500) || `PRC published the results for ${title}.`;
-}
-
-function extractResources(html, articleUrl) {
-  const $ = cheerio.load(html);
-  const resources = [];
-  $('a[href]').each((_, element) => {
-    const label = $(element).text().replace(/\s+/g, ' ').trim();
-    const href = $(element).attr('href');
-    if (!label || !href || !RESOURCE_TERMS.test(label)) return;
-    try {
-      const url = new URL(href, articleUrl);
-      if (url.protocol === 'https:' && ['drive.google.com', 'docs.google.com', 'prc.gov.ph', 'www.prc.gov.ph'].includes(url.hostname)) {
-        resources.push({ label, url: url.href });
-      }
-    } catch {
-      // Skip malformed attachment URLs.
-    }
-  });
-  return [...new Map(resources.map((resource) => [resource.url, resource])).values()];
 }
 
 function getLastPage(html) {
@@ -284,7 +264,7 @@ export default {
       ctx.waitUntil(publishCheck(env).catch((error) => console.error(JSON.stringify({ event: 'manual_check_failed', error: error.message }))));
       return Response.json({ started: true, message: 'The online PRC check has started. Check the admin dashboard for its result.' }, { status: 202 });
     }
-    return new Response('PRC result checker is online. Scheduled checks run every five minutes.', {
+    return new Response('PRC result checker is online. Scheduled checks run every minute.', {
       headers: { 'content-type': 'text/plain; charset=utf-8' },
     });
   },
