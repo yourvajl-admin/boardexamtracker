@@ -124,7 +124,7 @@ async function missingAnnouncementUrls(results, limit = 12) {
   for (const articleUrl of urls) {
     if (missing.length >= limit) break;
     const cached = await getCachedAnnouncement(articleUrl);
-    if (!cached || !cached.resources?.length || !Array.isArray(cached.details?.paragraphs) || !cached.details.paragraphs.length) missing.push(articleUrl);
+    if (!cached || !cached.resources?.length || cached.details?.source !== 'prc' || cached.details?.version !== 2 || !cached.details.summary || !Array.isArray(cached.details.facts)) missing.push(articleUrl);
   }
   return missing;
 }
@@ -1243,19 +1243,24 @@ app.get('/api/announcement-links', async (req, res) => {
     .set('Vercel-CDN-Cache-Control', cdnCacheControl)
     .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
-  const hasCachedDetails = typeof cached?.details?.summary === 'string'
+  const hasCachedDetails = cached?.details?.source === 'prc'
+    && cached.details.version === 2
+    && typeof cached.details.summary === 'string'
     && Boolean(cached.details.summary)
     && Array.isArray(cached.details.facts);
   if (cached?.resources?.length && hasCachedDetails) {
     return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
-    const announcement = await fetchAnnouncementLinks(articleUrl);
+    const announcement = await fetchAnnouncementLinks(articleUrl, { timeoutMs: 4000, retryDelays: [], curlFallback: false });
     if (cached && !announcement.resources.length) announcement.resources = cached.resources;
     await saveAnnouncementCache(articleUrl, announcement);
     return sendCachedJson({ url: articleUrl, ...announcement, cached: false });
   } catch (error) {
-    if (cached?.resources?.length) return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true, refreshError: true });
+    if (cached?.resources?.length) {
+      const details = hasCachedDetails ? cached.details : null;
+      return sendCachedJson({ url: articleUrl, resources: cached.resources, details, cached: true, refreshError: true });
+    }
     return res.status(502).json({ error: 'Could not retrieve links from this PRC announcement.', message: error.message });
   }
 });
@@ -1284,9 +1289,11 @@ app.post('/api/cron/cache-announcement-links', async (req, res) => {
     const persisted = await saveAnnouncementCache(articleUrl, {
       resources,
       details: entry.details && typeof entry.details === 'object' ? {
-        summary: typeof entry.details.summary === 'string' ? entry.details.summary.slice(0, 600) : '',
-        facts: Array.isArray(entry.details.facts) ? entry.details.facts.filter((fact) => typeof fact === 'string').slice(0, 12).map((fact) => fact.slice(0, 240)) : [],
+        summary: typeof entry.details.summary === 'string' ? entry.details.summary.slice(0, 2000) : '',
+        facts: Array.isArray(entry.details.facts) ? entry.details.facts.filter((fact) => typeof fact === 'string').slice(0, 12).map((fact) => fact.slice(0, 2000)) : [],
         paragraphs: Array.isArray(entry.details.paragraphs) ? entry.details.paragraphs.filter((paragraph) => typeof paragraph === 'string').slice(0, 20).map((paragraph) => paragraph.slice(0, 3000)) : [],
+        source: entry.details.source === 'prc' && entry.details.version === 2 ? 'prc' : '',
+        version: entry.details.source === 'prc' && entry.details.version === 2 ? 2 : 1,
       } : { summary: '', facts: [] },
     });
     if (!persisted) return res.status(503).json({ error: 'Could not persist the PRC announcement files. The new result will be retried before publication.' });

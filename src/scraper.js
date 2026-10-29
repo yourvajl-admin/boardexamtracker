@@ -2,7 +2,7 @@ const cheerio = require('cheerio');
 const { execFile } = require('node:child_process');
 const dns = require('node:dns');
 const { promisify } = require('node:util');
-const { extractAnnouncementDetails, rephraseResultDetails } = require('./announcement-details');
+const { extractAnnouncementDetails, extractResultDetails } = require('./announcement-details');
 const { PROFESSION_CATEGORIES, categorize } = require('./professions');
 
 // PRC's web server is intermittently unreachable over IPv6 from hosted runners.
@@ -79,8 +79,8 @@ function extractAnnouncementLinks(html, articleUrl) {
   return [...new Map(resources.map((resource) => [resource.url, resource])).values()];
 }
 
-async function fetchAnnouncementLinks(articleUrl) {
-  const html = await fetchPrcHtml(articleUrl, { maxBytes: 4 * 1024 * 1024 });
+async function fetchAnnouncementLinks(articleUrl, options = {}) {
+  const html = await fetchPrcHtml(articleUrl, { maxBytes: 4 * 1024 * 1024, ...options });
   return {
     resources: extractAnnouncementLinks(html, articleUrl),
     details: extractAnnouncementDetails(html),
@@ -154,8 +154,8 @@ function extractResults(html) {
     if (!date) return;
     const excerpt = container.find('p').first().text().replace(/\s+/g, ' ').trim() || text.replace(title, '').replace(/\d{1,2}\s+[A-Za-z]+,?\s+\d{4}/, '').trim();
     const category = categorize(title);
-    const details = rephraseResultDetails(title, category, excerpt, { includePublicationFact: true });
-    rows.push({ title, category, date, description: [details.summary, ...details.facts].join(' '), url });
+    const details = extractResultDetails(excerpt);
+    rows.push({ title, category, date, description: [details.summary, ...details.facts].filter(Boolean).join(' ') || excerpt || title, url });
   });
   const unique = new Map();
   for (const item of rows) if (!unique.has(item.url)) unique.set(item.url, item);

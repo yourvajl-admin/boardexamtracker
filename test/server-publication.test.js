@@ -15,9 +15,15 @@ const indexes = new Map();
 const originalFetch = global.fetch;
 let server;
 let baseUrl;
+let failPrcFetch = false;
 const { extractResults } = require('../src/scraper');
 
 const chemistsListingFixture = `<div class="views-row"><span>19 October, 2026</span><a href="/article/october-2026-chemists-computer-based-licensure-examination-and-chemical-technicians">October 2026 Chemists Computer-Based Licensure Examination and Chemical Technicians Licensure Examination Results Released in Three (3) Working Days</a><p>The Professional Regulation Commission announces the examination results.</p></div>`;
+const metallurgicalAnnouncementFixture = `<article>
+  <h1>October 2026 Metallurgical Engineers Computer-Based Licensure Examination Results Released</h1>
+  <p>The Professional Regulation Commission (PRC) announces that 36 out of 42 passed the Metallurgical Engineers Computer-Based Licensure Examination administered by the Board of Metallurgical Engineering in N. C. R., Cagayan de Oro, Cebu and Lucena this October 2026.</p>
+  <p>Members of the Board of Metallurgical Engineering who administered the licensure examination were Engr. Ralph A. Ante, Chairman; Engr. Juancho Pablo S. Calvez and Engr. Ludwig John H. Pascual, Members.</p>
+</article>`;
 
 function fakeRedisResponse(command) {
   const [operation, key, value] = command;
@@ -60,6 +66,11 @@ function request(path, { method = 'GET', headers = {}, body } = {}) {
 
 test.before(async () => {
   global.fetch = async (url, options = {}) => {
+    if (/^https:\/\/(?:www\.)?prc\.gov\.ph\/article\//.test(String(url))) {
+      return failPrcFetch
+        ? new Response('Source unavailable', { status: 503 })
+        : new Response(metallurgicalAnnouncementFixture, { status: 200, headers: { 'content-type': 'text/html' } });
+    }
     if (String(url) !== process.env.UPSTASH_REDIS_REST_URL) return originalFetch(url, options);
     const command = JSON.parse(options.body);
     return new Response(JSON.stringify({ result: fakeRedisResponse(command) }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -97,14 +108,31 @@ test('public result responses use a short edge cache', async () => {
   assert.match(cached.headers['cache-control'], /s-maxage=5/);
 });
 
-test('bundled result files load without a PRC refetch and use a short edge cache', async () => {
-  const response = await request('/api/announcement-links?url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-metallurgical-engineers-computer-based-licensure-examination-results-released');
+test('outdated bundled result details refresh from PRC and use a short edge cache', async () => {
+  const response = await request('/api/announcement-links?version=2&url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-metallurgical-engineers-computer-based-licensure-examination-results-released');
   assert.equal(response.status, 200);
-  assert.equal(response.data.cached, true);
+  assert.equal(response.data.cached, false);
   assert.ok(response.data.resources.length > 0);
+  assert.equal(response.data.details.source, 'prc');
+  assert.equal(response.data.details.version, 2);
+  assert.equal(response.data.details.summary, 'The Professional Regulation Commission (PRC) announces that 36 out of 42 passed the Metallurgical Engineers Computer-Based Licensure Examination administered by the Board of Metallurgical Engineering in N. C. R., Cagayan de Oro, Cebu and Lucena this October 2026.');
+  assert.equal(response.data.details.facts[0], 'Members of the Board of Metallurgical Engineering who administered the licensure examination were Engr. Ralph A. Ante, Chairman; Engr. Juancho Pablo S. Calvez and Engr. Ludwig John H. Pascual, Members.');
   assert.match(response.headers['cache-control'], /s-maxage=300/);
   assert.match(response.headers['cdn-cache-control'], /max-age=300/);
   assert.match(response.headers['vercel-cdn-cache-control'], /max-age=300/);
+});
+
+test('does not serve outdated bundled key figures when the PRC source cannot be verified', async () => {
+  failPrcFetch = true;
+  try {
+    const response = await request('/api/announcement-links?version=2&url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-mining-engineers-computer-based-licensure-examination-results-released-one-1');
+    assert.equal(response.status, 200);
+    assert.equal(response.data.refreshError, true);
+    assert.equal(response.data.details, null);
+    assert.ok(response.data.resources.length > 0);
+  } finally {
+    failPrcFetch = false;
+  }
 });
 
 test('new verified results persist and appear through the existing public results API once', async () => {

@@ -50,7 +50,10 @@ function canonicalAnnouncementUrl(value) {
 }
 
 async function fetchAnnouncementLinks(articleUrl) {
-  const response = await fetch(`/api/announcement-links?url=${encodeURIComponent(articleUrl)}`, { headers: { Accept: 'application/json' } });
+  const response = await fetch(`/api/announcement-links?version=2&url=${encodeURIComponent(articleUrl)}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(9000),
+  });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Could not load the files linked by this announcement.');
   return data;
@@ -89,15 +92,13 @@ function setText(selector, value) {
   if (element) element.textContent = value;
 }
 
-function descriptionHighlights(description, date) {
-  const sentences = String(description || '').match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
-  const facts = sentences.slice(1).map((sentence) => sentence.trim()).filter(Boolean);
-  return facts.length ? facts.slice(0, 8) : [`PRC published this result on ${formatDate(date)}.`];
-}
-
-function renderHighlights(summary, facts) {
-  document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(summary)}</p>`;
-  const visibleFacts = facts.length ? facts : ['The official PRC result documents are available below.'];
+function renderHighlights(details, { loading = false } = {}) {
+  const summary = details?.summary;
+  const facts = Array.isArray(details?.facts) ? details.facts : [];
+  const fallbackSummary = loading ? 'Loading the source-verified summary…' : 'A verified summary is not available. Please check the official PRC announcement.';
+  document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(summary || fallbackSummary)}</p>`;
+  const fallbackFact = loading ? 'Checking the official PRC announcement for key figures…' : 'Key figures are not shown because they could not be verified against the PRC announcement.';
+  const visibleFacts = facts.length ? facts : [fallbackFact];
   document.querySelector('#result-facts').innerHTML = `<h3 class="facts-title">Key figures</h3><ul class="key-facts">${visibleFacts.map((fact) => `<li><i class="ph ph-check-circle" aria-hidden="true"></i>${escapeHtml(fact)}</li>`).join('')}</ul>`;
 }
 
@@ -129,23 +130,20 @@ async function loadResult() {
     setText('#result-date', formatDate(item.date));
     setText('#aside-date', formatDate(item.date));
     document.querySelector('#result-source').href = announcementUrl || item.url;
-    const fallbackSummary = (item.description || `PRC published the results for ${category}.`).split(/(?<=[.!?])\s+(?=[A-Z])/)[0];
-    renderHighlights(fallbackSummary, descriptionHighlights(item.description, item.date));
+    renderHighlights(null, { loading: true });
 
     const resources = document.querySelector('#detail-resources');
     try {
       if (!announcementUrl) throw new Error('The PRC announcement link is invalid.');
       const linksData = await fetchAnnouncementLinks(announcementUrl);
-      const officialFacts = Array.isArray(linksData.details?.facts) ? linksData.details.facts : [];
-      renderHighlights(
-        linksData.details?.summary || fallbackSummary,
-        officialFacts.length ? officialFacts : descriptionHighlights(item.description, item.date),
-      );
+      const verifiedDetails = linksData.details?.source === 'prc' && linksData.details.version === 2 ? linksData.details : null;
+      renderHighlights(verifiedDetails);
       resources.innerHTML = linksData.resources?.length
         ? `<div class="file-list">${linksData.resources.map(renderResource).join('')}</div>`
         : '<p class="detail-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';
     } catch {
-      resources.innerHTML = `<p class="detail-empty">The result details are shown above. We could not load the attached files just now. <a href="${escapeHtml(announcementUrl || item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>, or <button type="button" id="retry-result-files">retry loading the files</button>.</p>`;
+      renderHighlights(null);
+      resources.innerHTML = `<p class="detail-empty">We could not load the linked files or verify the result details just now. <a href="${escapeHtml(announcementUrl || item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>, or <button type="button" id="retry-result-files">retry loading the files</button>.</p>`;
       document.querySelector('#retry-result-files')?.addEventListener('click', () => loadResult());
     }
   } catch (error) {
