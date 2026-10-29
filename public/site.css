@@ -332,12 +332,7 @@ select.field:disabled { opacity: 0.6; cursor: not-allowed; }
 .detail-facts dd { margin: 0; color: var(--ink); font-weight: 600; text-align: right; }
 .detail-note { display: flex; gap: 10px; margin-top: 16px; font-size: 13.5px; color: var(--muted); }
 .detail-note .ph { flex: none; margin-top: 2px; font-size: 17px; color: var(--blue); }
-.detail-alerts { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: var(--radius); background: linear-gradient(135deg, #0a2d59, #08244a); color: #fff; }
-.detail-alerts > .ph:first-child { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--blue-action); font-size: 20px; flex: none; }
-.detail-alerts span { flex: 1; display: grid; gap: 2px; }
-.detail-alerts small { color: #c4d3e6; font-size: 13px; }
-.detail-alerts:hover > .ph:last-child { transform: translateX(3px); }
-.detail-alerts > .ph:last-child { transition: transform 0.15s; }
+.detail-source-button { width: 100%; }
 
 /* Footer */
 .site-foot { background: var(--foot-bg); color: var(--foot-text); font-size: 14px; }
