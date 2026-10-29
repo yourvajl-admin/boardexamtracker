@@ -130,7 +130,7 @@ async function loadResult() {
     setText('#result-date', formatDate(item.date));
     setText('#aside-date', formatDate(item.date));
     document.querySelector('#result-source').href = announcementUrl || item.url;
-    const headlineSummary = `PRC announcement: ${item.title}`;
+    const headlineSummary = item.description?.trim() || `PRC announcement: ${item.title}`;
     renderHighlights(null, { fallbackSummary: headlineSummary, loading: true });
 
     const resources = document.querySelector('#detail-resources');

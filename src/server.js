@@ -62,6 +62,21 @@ function announcementCacheKey(articleUrl) {
   return `${ANNOUNCEMENT_CACHE_KEY_PREFIX}${Buffer.from(articleUrl).toString('base64url')}`;
 }
 
+function hasVerifiedAnnouncementDetails(details) {
+  return details?.source === 'prc'
+    && details.version === 2
+    && typeof details.summary === 'string'
+    && Boolean(details.summary)
+    && Array.isArray(details.facts);
+}
+
+function preferBundledDetails(cached, bundled) {
+  if (hasVerifiedAnnouncementDetails(bundled?.details) && !hasVerifiedAnnouncementDetails(cached?.details)) {
+    return { ...cached, details: bundled.details };
+  }
+  return cached;
+}
+
 function findBundledAnnouncement(articleUrl) {
   const normalizedUrl = normalizeUrl(articleUrl);
   const targetUrl = normalizedUrl || articleUrl;
@@ -85,7 +100,7 @@ async function getCachedAnnouncement(articleUrl) {
   const memoryValue = announcementCache.get(articleUrl);
   const memoryTtl = memoryValue?.resources?.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
   if (memoryValue && Date.now() - memoryValue.fetchedAt < memoryTtl) {
-    return memoryValue.resources?.length ? memoryValue : bundledValue || memoryValue;
+    return memoryValue.resources?.length ? preferBundledDetails(memoryValue, bundledValue) : bundledValue || memoryValue;
   }
   if (!isPersistentStorageConfigured()) return bundledValue;
   try {
@@ -97,7 +112,7 @@ async function getCachedAnnouncement(articleUrl) {
     if (Date.now() - value.fetchedAt >= ttl) return bundledValue;
     if (!value.resources.length && bundledValue) return bundledValue;
     announcementCache.set(articleUrl, value);
-    return value;
+    return value.resources.length ? preferBundledDetails(value, bundledValue) : value;
   } catch (error) {
     console.warn('Could not read cached PRC announcement links:', error.message);
     return bundledValue;
@@ -1248,11 +1263,7 @@ app.get('/api/announcement-links', async (req, res) => {
     .set('Vercel-CDN-Cache-Control', 'no-store')
     .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
-  const hasCachedDetails = cached?.details?.source === 'prc'
-    && cached.details.version === 2
-    && typeof cached.details.summary === 'string'
-    && Boolean(cached.details.summary)
-    && Array.isArray(cached.details.facts);
+  const hasCachedDetails = hasVerifiedAnnouncementDetails(cached?.details);
   if (cached?.resources?.length && hasCachedDetails) {
     return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }

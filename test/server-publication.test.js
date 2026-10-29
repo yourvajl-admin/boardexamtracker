@@ -23,6 +23,7 @@ const metallurgicalAnnouncementFixture = `<article>
   <h1>October 2026 Metallurgical Engineers Computer-Based Licensure Examination Results Released</h1>
   <p>The Professional Regulation Commission (PRC) announces that 36 out of 42 passed the Metallurgical Engineers Computer-Based Licensure Examination administered by the Board of Metallurgical Engineering in N. C. R., Cagayan de Oro, Cebu and Lucena this October 2026.</p>
   <p>Members of the Board of Metallurgical Engineering who administered the licensure examination were Engr. Ralph A. Ante, Chairman; Engr. Juancho Pablo S. Calvez and Engr. Ludwig John H. Pascual, Members.</p>
+  <a href="https://drive.google.com/file/d/example/view">Full text of the Official Result</a>
 </article>`;
 
 function fakeRedisResponse(command) {
@@ -108,8 +109,8 @@ test('public result responses use a short edge cache', async () => {
   assert.match(cached.headers['cache-control'], /s-maxage=5/);
 });
 
-test('outdated bundled result details refresh from PRC and use a short edge cache', async () => {
-  const response = await request('/api/announcement-links?version=2&url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-metallurgical-engineers-computer-based-licensure-examination-results-released');
+test('PRC announcement details refresh and use a short edge cache', async () => {
+  const response = await request('/api/announcement-links?version=2&url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Ffixture-exam-results');
   assert.equal(response.status, 200);
   assert.equal(response.data.cached, false);
   assert.ok(response.data.resources.length > 0);
@@ -120,6 +121,29 @@ test('outdated bundled result details refresh from PRC and use a short edge cach
   assert.match(response.headers['cache-control'], /s-maxage=300/);
   assert.match(response.headers['cdn-cache-control'], /max-age=300/);
   assert.match(response.headers['vercel-cdn-cache-control'], /max-age=300/);
+});
+
+test('verified Metallurgical Engineers fallback details remain visible during a PRC outage', async () => {
+  failPrcFetch = true;
+  try {
+    const articleUrl = 'https://www.prc.gov.ph/article/october-2026-metallurgical-engineers-computer-based-licensure-examination-results-released';
+    const cacheKey = `boardexamtracker:announcement-links:v1:${Buffer.from(articleUrl).toString('base64url')}`;
+    values.set(cacheKey, JSON.stringify({
+      resources: [{ label: 'Cached official result', url: 'https://drive.google.com/file/d/example/view' }],
+      details: { summary: '', facts: [] },
+      fetchedAt: Date.now(),
+    }));
+    const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.data.cached, true);
+    assert.equal(response.data.details.source, 'prc');
+    assert.equal(response.data.details.version, 2);
+    assert.match(response.data.details.summary, /36 of 42 passed/);
+    assert.match(response.data.details.facts[1], /Board of Metallurgical Engineering/);
+    assert.equal(response.data.resources[0].label, 'Cached official result');
+  } finally {
+    failPrcFetch = false;
+  }
 });
 
 test('does not serve outdated bundled key figures when the PRC source cannot be verified', async () => {
