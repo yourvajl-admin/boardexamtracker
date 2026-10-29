@@ -92,11 +92,11 @@ function setText(selector, value) {
   if (element) element.textContent = value;
 }
 
-function renderHighlights(details, { loading = false } = {}) {
+function renderHighlights(details, { fallbackSummary = '', loading = false } = {}) {
   const summary = details?.summary;
   const facts = Array.isArray(details?.facts) ? details.facts : [];
-  const fallbackSummary = loading ? 'Loading the source-verified summary…' : 'A verified summary is not available. Please check the official PRC announcement.';
-  document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(summary || fallbackSummary)}</p>`;
+  const pendingSummary = loading ? 'Loading the source-verified summary…' : '';
+  document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(summary || fallbackSummary || pendingSummary || 'A verified summary is not available. Please check the official PRC announcement.')}</p>`;
   const fallbackFact = loading ? 'Checking the official PRC announcement for key figures…' : 'Key figures are not shown because they could not be verified against the PRC announcement.';
   const visibleFacts = facts.length ? facts : [fallbackFact];
   document.querySelector('#result-facts').innerHTML = `<h3 class="facts-title">Key figures</h3><ul class="key-facts">${visibleFacts.map((fact) => `<li><i class="ph ph-check-circle" aria-hidden="true"></i>${escapeHtml(fact)}</li>`).join('')}</ul>`;
@@ -130,19 +130,20 @@ async function loadResult() {
     setText('#result-date', formatDate(item.date));
     setText('#aside-date', formatDate(item.date));
     document.querySelector('#result-source').href = announcementUrl || item.url;
-    renderHighlights(null, { loading: true });
+    const headlineSummary = `PRC announcement: ${item.title}`;
+    renderHighlights(null, { fallbackSummary: headlineSummary, loading: true });
 
     const resources = document.querySelector('#detail-resources');
     try {
       if (!announcementUrl) throw new Error('The PRC announcement link is invalid.');
       const linksData = await fetchAnnouncementLinks(announcementUrl);
       const verifiedDetails = linksData.details?.source === 'prc' && linksData.details.version === 2 ? linksData.details : null;
-      renderHighlights(verifiedDetails);
+      renderHighlights(verifiedDetails, { fallbackSummary: headlineSummary });
       resources.innerHTML = linksData.resources?.length
         ? `<div class="file-list">${linksData.resources.map(renderResource).join('')}</div>`
         : '<p class="detail-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';
     } catch {
-      renderHighlights(null);
+      renderHighlights(null, { fallbackSummary: headlineSummary });
       resources.innerHTML = `<p class="detail-empty">We could not load the linked files or verify the result details just now. <a href="${escapeHtml(announcementUrl || item.url)}" target="_blank" rel="noopener noreferrer">Open the official PRC announcement</a>, or <button type="button" id="retry-result-files">retry loading the files</button>.</p>`;
       document.querySelector('#retry-result-files')?.addEventListener('click', () => loadResult());
     }
