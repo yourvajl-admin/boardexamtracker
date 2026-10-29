@@ -138,6 +138,21 @@ test('verified announcements without separate files remain cached and serve thei
   assert.match(response.data.details.summary, /confirms the result/);
 });
 
+test('bundled older result files are served immediately without fetching PRC', async () => {
+  failPrcFetch = true;
+  try {
+    const articleUrl = 'https://www.prc.gov.ph/article/may-2026-radiologic-technologists-special-professional-licensure-examination-results';
+    const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.data.cached, true);
+    assert.equal(response.data.resources.length, 2);
+    assert.match(response.data.resources[0].url, /drive\.google\.com\/file\/d\//);
+    assert.match(response.data.details.summary, /none passed out of 2 examinees/);
+  } finally {
+    failPrcFetch = false;
+  }
+});
+
 test('announcement backfill rotates through the complete saved results archive', async () => {
   const unauthorized = await request('/api/cron/announcement-link-backfill', {
     method: 'POST',
@@ -187,15 +202,14 @@ test('verified Metallurgical Engineers fallback details remain visible during a 
   }
 });
 
-test('does not serve outdated bundled key figures when the PRC source cannot be verified', async () => {
+test('serves bundled files without outdated details when the PRC source cannot be verified', async () => {
   failPrcFetch = true;
   try {
     const response = await request('/api/announcement-links?version=2&url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-mining-engineers-computer-based-licensure-examination-results-released-one-1');
     assert.equal(response.status, 200);
-    assert.equal(response.data.refreshError, true);
+    assert.equal(response.data.cached, true);
     assert.equal(response.data.details, null);
     assert.ok(response.data.resources.length > 0);
-    assert.equal(response.headers['cache-control'], 'no-store');
   } finally {
     failPrcFetch = false;
   }

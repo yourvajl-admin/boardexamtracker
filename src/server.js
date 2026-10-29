@@ -1280,6 +1280,14 @@ app.get('/api/announcement-links', async (req, res) => {
     .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
   const hasCachedDetails = hasVerifiedAnnouncementDetails(cached?.details);
+  if (cached?.resources?.length) {
+    return sendCachedJson({
+      url: articleUrl,
+      resources: cached.resources,
+      details: hasCachedDetails ? cached.details : null,
+      cached: true,
+    });
+  }
   if (hasCachedDetails) {
     return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
