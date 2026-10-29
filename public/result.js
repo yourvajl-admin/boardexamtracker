@@ -50,7 +50,7 @@ function canonicalAnnouncementUrl(value) {
 }
 
 async function fetchAnnouncementLinks(articleUrl) {
-  const response = await fetch(`/api/announcement-links?version=2&url=${encodeURIComponent(articleUrl)}`, {
+  const response = await fetch(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`, {
     headers: { Accept: 'application/json' },
     signal: AbortSignal.timeout(9000),
   });

@@ -130,6 +130,7 @@ test('does not serve outdated bundled key figures when the PRC source cannot be 
     assert.equal(response.data.refreshError, true);
     assert.equal(response.data.details, null);
     assert.ok(response.data.resources.length > 0);
+    assert.equal(response.headers['cache-control'], 'no-store');
   } finally {
     failPrcFetch = false;
   }

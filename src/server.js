@@ -1242,6 +1242,11 @@ app.get('/api/announcement-links', async (req, res) => {
     .set('CDN-Cache-Control', cdnCacheControl)
     .set('Vercel-CDN-Cache-Control', cdnCacheControl)
     .json(body);
+  const sendUncachedJson = (body) => res
+    .set('Cache-Control', 'no-store')
+    .set('CDN-Cache-Control', 'no-store')
+    .set('Vercel-CDN-Cache-Control', 'no-store')
+    .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
   const hasCachedDetails = cached?.details?.source === 'prc'
     && cached.details.version === 2
@@ -1259,7 +1264,8 @@ app.get('/api/announcement-links', async (req, res) => {
   } catch (error) {
     if (cached?.resources?.length) {
       const details = hasCachedDetails ? cached.details : null;
-      return sendCachedJson({ url: articleUrl, resources: cached.resources, details, cached: true, refreshError: true });
+      const body = { url: articleUrl, resources: cached.resources, details, cached: true, refreshError: true };
+      return hasCachedDetails ? sendCachedJson(body) : sendUncachedJson(body);
     }
     return res.status(502).json({ error: 'Could not retrieve links from this PRC announcement.', message: error.message });
   }
