@@ -38,6 +38,9 @@ const RESULTS_CACHE_KEY = 'boardexamtracker:results-cache:v1';
 const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const RESULTS_CHECK_STATUS_KEY = 'boardexamtracker:results-check-status:v1';
 const RESULTS_SCAN_CURSOR_KEY = 'boardexamtracker:results-scan-cursor:v1';
+const ANNOUNCEMENT_BACKFILL_CURSOR_KEY = 'boardexamtracker:announcement-links:backfill-cursor:v1';
+const ANNOUNCEMENT_BACKFILL_BATCH_SIZE = 6;
+const ANNOUNCEMENT_BACKFILL_SCAN_SIZE = 24;
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
 const BLOG_POSTS_KEY = 'boardexamtracker:blog:posts';
 const BLOG_POST_INDEX_KEY = 'boardexamtracker:blog:index';
@@ -66,15 +69,18 @@ function hasVerifiedAnnouncementDetails(details) {
   return details?.source === 'prc'
     && details.version === 2
     && typeof details.summary === 'string'
-    && Boolean(details.summary)
     && Array.isArray(details.facts);
 }
 
 function preferBundledDetails(cached, bundled) {
-  if (hasVerifiedAnnouncementDetails(bundled?.details) && !hasVerifiedAnnouncementDetails(cached?.details)) {
-    return { ...cached, details: bundled.details };
-  }
-  return cached;
+  if (!cached) return bundled;
+  return {
+    ...cached,
+    resources: cached.resources?.length ? cached.resources : bundled?.resources || [],
+    details: hasVerifiedAnnouncementDetails(bundled?.details) && !hasVerifiedAnnouncementDetails(cached.details)
+      ? bundled.details
+      : cached.details,
+  };
 }
 
 function findBundledAnnouncement(articleUrl) {
@@ -98,9 +104,11 @@ function findBundledAnnouncement(articleUrl) {
 async function getCachedAnnouncement(articleUrl) {
   const bundledValue = findBundledAnnouncement(articleUrl);
   const memoryValue = announcementCache.get(articleUrl);
-  const memoryTtl = memoryValue?.resources?.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
+  const memoryTtl = memoryValue?.resources?.length || hasVerifiedAnnouncementDetails(memoryValue?.details)
+    ? 30 * 24 * 60 * 60 * 1000
+    : 6 * 60 * 60 * 1000;
   if (memoryValue && Date.now() - memoryValue.fetchedAt < memoryTtl) {
-    return memoryValue.resources?.length ? preferBundledDetails(memoryValue, bundledValue) : bundledValue || memoryValue;
+    return preferBundledDetails(memoryValue, bundledValue);
   }
   if (!isPersistentStorageConfigured()) return bundledValue;
   try {
@@ -108,11 +116,12 @@ async function getCachedAnnouncement(articleUrl) {
     if (typeof saved !== 'string') return bundledValue;
     const value = JSON.parse(saved);
     if (!Array.isArray(value.resources) || !Number.isFinite(value.fetchedAt)) return bundledValue;
-    const ttl = value.resources.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
+    const ttl = value.resources.length || hasVerifiedAnnouncementDetails(value.details)
+      ? 30 * 24 * 60 * 60 * 1000
+      : 6 * 60 * 60 * 1000;
     if (Date.now() - value.fetchedAt >= ttl) return bundledValue;
-    if (!value.resources.length && bundledValue) return bundledValue;
     announcementCache.set(articleUrl, value);
-    return value.resources.length ? preferBundledDetails(value, bundledValue) : value;
+    return preferBundledDetails(value, bundledValue);
   } catch (error) {
     console.warn('Could not read cached PRC announcement links:', error.message);
     return bundledValue;
@@ -124,7 +133,9 @@ async function saveAnnouncementCache(articleUrl, value) {
   announcementCache.set(articleUrl, cached);
   if (!isPersistentStorageConfigured()) return false;
   try {
-    const ttl = cached.resources?.length ? 60 * 60 * 24 * 30 : 60 * 60 * 6;
+    const ttl = cached.resources?.length || hasVerifiedAnnouncementDetails(cached.details)
+      ? 60 * 60 * 24 * 30
+      : 60 * 60 * 6;
     await redisCommand('SET', announcementCacheKey(articleUrl), JSON.stringify(cached), 'EX', ttl);
     return true;
   } catch (error) {
@@ -139,7 +150,7 @@ async function missingAnnouncementUrls(results, limit = 12) {
   for (const articleUrl of urls) {
     if (missing.length >= limit) break;
     const cached = await getCachedAnnouncement(articleUrl);
-    if (!cached || !cached.resources?.length || cached.details?.source !== 'prc' || cached.details?.version !== 2 || !cached.details.summary || !Array.isArray(cached.details.facts)) missing.push(articleUrl);
+    if (!hasVerifiedAnnouncementDetails(cached?.details)) missing.push(articleUrl);
   }
   return missing;
 }
@@ -223,7 +234,7 @@ function blogStorageReady(res) {
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
-  const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links', '/api/cron/check-status'].includes(req.path);
+  const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links', '/api/cron/announcement-link-backfill', '/api/cron/check-status'].includes(req.path);
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
   const limit = isCronPayload ? '1mb' : isBlogWrite ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
@@ -1264,7 +1275,7 @@ app.get('/api/announcement-links', async (req, res) => {
     .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
   const hasCachedDetails = hasVerifiedAnnouncementDetails(cached?.details);
-  if (cached?.resources?.length && hasCachedDetails) {
+  if (hasCachedDetails) {
     return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
@@ -1279,6 +1290,48 @@ app.get('/api/announcement-links', async (req, res) => {
       return hasCachedDetails ? sendCachedJson(body) : sendUncachedJson(body);
     }
     return res.status(502).json({ error: 'Could not retrieve links from this PRC announcement.', message: error.message });
+  }
+});
+
+app.post('/api/cron/announcement-link-backfill', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
+  const lockToken = typeof req.body?.lockToken === 'string' ? req.body.lockToken : '';
+  try {
+    if (!lockToken || await redisCommand('GET', RESULTS_CHECK_LOCK_KEY) !== lockToken) {
+      return res.status(409).json({ error: 'The scheduled-check lock is missing or expired.' });
+    }
+    await restorePersistentResultCache();
+    restoreBundledResultCache();
+    const results = mergeResultLists(getCache()?.results || [], bundledResultSnapshot.results || []);
+    if (!results.length) return res.json({ urls: [], scanned: 0 });
+
+    const savedCursor = Number(await redisCommand('GET', ANNOUNCEMENT_BACKFILL_CURSOR_KEY));
+    const start = Number.isInteger(savedCursor) && savedCursor >= 0 ? savedCursor % results.length : 0;
+    const scanCount = Math.min(results.length, ANNOUNCEMENT_BACKFILL_SCAN_SIZE);
+    const candidates = Array.from({ length: scanCount }, (_, offset) => results[(start + offset) % results.length]);
+    const cachedValues = await redisCommand('MGET', ...candidates.map((result) => announcementCacheKey(result.url)));
+    const urls = [];
+    let scanned = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+      scanned = index + 1;
+      const articleUrl = candidates[index].url;
+      let cachedDetails = null;
+      if (typeof cachedValues?.[index] === 'string') {
+        try { cachedDetails = JSON.parse(cachedValues[index])?.details; } catch { cachedDetails = null; }
+      }
+      if (!hasVerifiedAnnouncementDetails(cachedDetails)
+        && !hasVerifiedAnnouncementDetails(findBundledAnnouncement(articleUrl)?.details)) {
+        urls.push(articleUrl);
+        if (urls.length >= ANNOUNCEMENT_BACKFILL_BATCH_SIZE) break;
+      }
+    }
+    if (urls.length < ANNOUNCEMENT_BACKFILL_BATCH_SIZE) scanned = scanCount;
+    await redisCommand('SET', ANNOUNCEMENT_BACKFILL_CURSOR_KEY, String((start + scanned) % results.length));
+    return res.json({ urls, scanned });
+  } catch (error) {
+    console.error('Could not select PRC announcement links for backfill:', error.message);
+    return res.status(503).json({ error: 'Could not load the saved results archive for announcement backfill.' });
   }
 });
 

@@ -138,6 +138,27 @@ async function siteRequest(env, endpoint, { method = 'POST', body, lockToken, ti
   return data;
 }
 
+async function backfillAnnouncementLinks(env, lockToken) {
+  try {
+    const batch = await siteRequest(env, 'announcement-link-backfill', { body: { lockToken }, lockToken });
+    const announcements = (await Promise.all((batch.urls || []).map(async (url) => {
+      try {
+        const html = await fetchPrcArticle(url);
+        return { url, resources: extractResources(html, url), details: extractAnnouncementDetails(html) };
+      } catch (error) {
+        console.warn(`Could not backfill PRC files for ${url}: ${error.message}`);
+        return null;
+      }
+    }))).filter(Boolean);
+    if (announcements.length) {
+      await siteRequest(env, 'cache-announcement-links', { body: { announcements }, lockToken, timeoutMs: 60000 });
+    }
+    console.log(JSON.stringify({ event: 'announcement_links_backfilled', scanned: batch.scanned || 0, saved: announcements.length }));
+  } catch (error) {
+    console.error(`Could not backfill older PRC announcement files: ${error.message}`);
+  }
+}
+
 async function publishCheck(env) {
   if (!env.CRON_SECRET) throw new Error('Missing Worker secret CRON_SECRET.');
   let lockToken;
@@ -145,6 +166,7 @@ async function publishCheck(env) {
     const lock = await siteRequest(env, 'check-status', { body: { action: 'acquire' } });
     lockToken = lock.lockToken;
     await siteRequest(env, 'check-status', { body: { action: 'started' } });
+    await backfillAnnouncementLinks(env, lockToken);
 
     const firstPage = await fetchPrcPage(0);
     const lastPage = getLastPage(firstPage.html);

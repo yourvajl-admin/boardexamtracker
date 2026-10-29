@@ -123,6 +123,47 @@ test('PRC announcement details refresh and use a short edge cache', async () => 
   assert.match(response.headers['vercel-cdn-cache-control'], /max-age=300/);
 });
 
+test('verified announcements without separate files remain cached and serve their details', async () => {
+  const articleUrl = 'https://www.prc.gov.ph/article/fixture-result-with-no-files';
+  const cacheKey = `boardexamtracker:announcement-links:v1:${Buffer.from(articleUrl).toString('base64url')}`;
+  values.set(cacheKey, JSON.stringify({
+    resources: [],
+    details: { summary: 'The PRC announcement confirms the result.', facts: [], source: 'prc', version: 2 },
+    fetchedAt: Date.now(),
+  }));
+  const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.data.cached, true);
+  assert.deepEqual(response.data.resources, []);
+  assert.match(response.data.details.summary, /confirms the result/);
+});
+
+test('announcement backfill rotates through the complete saved results archive', async () => {
+  const unauthorized = await request('/api/cron/announcement-link-backfill', {
+    method: 'POST',
+    headers: { authorization: 'Bearer wrong-secret' },
+    body: {},
+  });
+  assert.equal(unauthorized.status, 401);
+
+  values.set('boardexamtracker:results-check-lock', 'backfill-test-lock');
+  const invoke = () => request('/api/cron/announcement-link-backfill', {
+    method: 'POST',
+    headers: { authorization: 'Bearer test-cron-secret' },
+    body: { lockToken: 'backfill-test-lock' },
+  });
+  const first = await invoke();
+  assert.equal(first.status, 200);
+  assert.equal(first.data.urls.length, 6);
+  assert.ok(first.data.urls.every((url) => /^https:\/\/www\.prc\.gov\.ph\/(?:article|node)\//.test(url)));
+
+  const second = await invoke();
+  assert.equal(second.status, 200);
+  assert.equal(second.data.urls.length, 6);
+  assert.equal(second.data.urls.some((url) => first.data.urls.includes(url)), false);
+  values.delete('boardexamtracker:results-check-lock');
+});
+
 test('verified Metallurgical Engineers fallback details remain visible during a PRC outage', async () => {
   failPrcFetch = true;
   try {
