@@ -42,10 +42,28 @@ test('retries HTTP 521 with exponential backoff and records every response safel
     random: () => 0.5,
     logger: (line) => logs.push(JSON.parse(line)),
   }), /HTTP 521/);
-  assert.equal(calls, 3);
+  assert.equal(calls, 6);
   assert.deepEqual(delays, [1000, 2000]);
-  assert.deepEqual(logs.filter((entry) => entry.event === 'prc_http_attempt' && entry.status === 521).map((entry) => entry.requestUrl), [PRC_URL, PRC_URL, PRC_URL]);
+  assert.deepEqual(logs.filter((entry) => entry.event === 'prc_http_attempt' && entry.status === 521).map((entry) => entry.requestUrl), [
+    PRC_URL, PRC_URL.replace('www.', ''),
+    PRC_URL, PRC_URL.replace('www.', ''),
+    PRC_URL, PRC_URL.replace('www.', ''),
+  ]);
   assert.ok(logs.some((entry) => entry.retryInMs === 1000));
+});
+
+test('falls back to the official bare PRC hostname after a retryable www failure', async () => {
+  const requested = [];
+  const fetched = await fetchPrcPage(0, {
+    fetchImpl: async (url) => {
+      requested.push(url);
+      return url.startsWith('https://www.') ? makeResponse('origin unavailable', 521) : makeResponse(resultHtml);
+    },
+    logger: () => {},
+  });
+  assert.deepEqual(requested, [PRC_URL, PRC_URL.replace('www.', '')]);
+  assert.equal(fetched.url, PRC_URL.replace('www.', ''));
+  assert.equal(fetched.html, resultHtml);
 });
 
 test('rejects challenge pages and unexpected content types without publishing an empty result set', async () => {
@@ -72,14 +90,14 @@ test('does not retry an explicit PRC access denial but retries rate limits with 
   const fetched = await fetchPrcPage(0, {
     fetchImpl: async () => {
       calls += 1;
-      return calls === 1 ? makeResponse('Slow down', 429, { 'retry-after': '1' }) : makeResponse(resultHtml);
+      return calls <= 2 ? makeResponse('Slow down', 429, { 'retry-after': '1' }) : makeResponse(resultHtml);
     },
     sleepImpl: async (ms) => delays.push(ms),
     random: () => 0,
     logger: () => {},
   });
   assert.equal(fetched.html, resultHtml);
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.deepEqual(delays, [1000]);
 });
 
@@ -92,7 +110,7 @@ test('honors Retry-After and defers a retry when the requested wait is too long'
     sleepImpl: async (ms) => delays.push(ms),
     logger: () => {},
   }), /HTTP 503/);
-  assert.equal(calls, 1, 'does not retry before PRC’s requested 120-second delay');
+  assert.equal(calls, 2, 'tries both PRC hostnames, then defers the retry to respect PRC’s requested delay');
   assert.deepEqual(delays, []);
 });
 
@@ -106,9 +124,9 @@ test('retries a network timeout only a bounded number of times', async () => {
     random: () => 0.5,
     logger: (line) => logs.push(JSON.parse(line)),
   }), /request timed out/);
-  assert.equal(calls, 3);
+  assert.equal(calls, 6);
   assert.deepEqual(delays, [1000, 2000]);
-  assert.ok(logs.every((entry) => entry.status === null && entry.requestUrl === PRC_URL));
+  assert.ok(logs.every((entry) => entry.status === null && [PRC_URL, PRC_URL.replace('www.', '')].includes(entry.requestUrl)));
 });
 
 test('a malformed 200 response is not mistaken for an empty successful result feed', async () => {

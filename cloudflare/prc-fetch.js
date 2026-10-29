@@ -73,111 +73,128 @@ async function fetchPrcPage(page, options = {}) {
   const timeoutMs = Math.max(1000, options.timeoutMs ?? 12000);
   const url = new URL(PRC_URL);
   if (Number.isInteger(page) && page > 0) url.searchParams.set('page', String(page));
+  const sourceUrls = ['www.prc.gov.ph', 'prc.gov.ph'].map((host) => {
+    const sourceUrl = new URL(url.href);
+    sourceUrl.hostname = host;
+    return sourceUrl;
+  });
 
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    let current = new URL(url.href);
-    let response;
-    const started = now();
-    try {
-      for (let redirects = 0; redirects <= 5; redirects += 1) {
-        response = await fetchImpl(current.href, {
-          redirect: 'manual',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
-            Accept: 'text/html,application/xhtml+xml',
-          },
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        const headers = selectedHeaders(response.headers);
-        if (REDIRECT_STATUSES.has(response.status)) {
-          logDiagnostic(logger, {
-            requestUrl: current.href,
-            status: response.status,
-            elapsedMs: Math.max(0, now() - started),
-            attempt,
-            responseHeaders: headers,
+    let shouldRetry = false;
+    let retryAfterForAttempt = null;
+    for (const sourceUrl of sourceUrls) {
+      let current = new URL(sourceUrl.href);
+      let response;
+      const started = now();
+      try {
+        for (let redirects = 0; redirects <= 5; redirects += 1) {
+          response = await fetchImpl(current.href, {
+            redirect: 'manual',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; BoardExamTracker/1.0; +https://www.boardexamtracker.com)',
+              Accept: 'text/html,application/xhtml+xml',
+            },
+            signal: AbortSignal.timeout(timeoutMs),
           });
-          const location = response.headers.get('location');
-          const redirected = location ? new URL(location, current) : null;
-          if (!redirected || redirected.protocol !== 'https:' || !PRC_HOSTS.has(redirected.hostname)) {
-            throw new Error('PRC redirected outside the approved official source hosts.');
+          const headers = selectedHeaders(response.headers);
+          if (REDIRECT_STATUSES.has(response.status)) {
+            logDiagnostic(logger, {
+              requestUrl: current.href,
+              status: response.status,
+              elapsedMs: Math.max(0, now() - started),
+              attempt,
+              responseHeaders: headers,
+            });
+            const location = response.headers.get('location');
+            const redirected = location ? new URL(location, current) : null;
+            if (!redirected || redirected.protocol !== 'https:' || !PRC_HOSTS.has(redirected.hostname)) {
+              throw new Error('PRC redirected outside the approved official source hosts.');
+            }
+            current = redirected;
+            continue;
           }
-          current = redirected;
-          continue;
-        }
 
-        if (!response.ok) {
-          const retryAfter = retryAfterMs(response.headers.get('retry-after'), now());
+          if (!response.ok) {
+            const retryAfter = retryAfterMs(response.headers.get('retry-after'), now());
+            logDiagnostic(logger, {
+              requestUrl: current.href,
+              status: response.status,
+              elapsedMs: Math.max(0, now() - started),
+              attempt,
+              responseHeaders: headers,
+            });
+            const error = new Error(`PRC returned HTTP ${response.status} for ${current.href}.`);
+            error.retryable = RETRYABLE_STATUSES.has(response.status);
+            error.retryAfterMs = retryAfter;
+            throw error;
+          }
+
+          const html = await response.text();
+          const elapsedMs = Math.max(0, now() - started);
           logDiagnostic(logger, {
             requestUrl: current.href,
             status: response.status,
-            elapsedMs: Math.max(0, now() - started),
+            elapsedMs,
             attempt,
             responseHeaders: headers,
+            responseBytes: new TextEncoder().encode(html).byteLength,
           });
-          const error = new Error(`PRC returned HTTP ${response.status} for ${current.href}.`);
-          error.retryable = RETRYABLE_STATUSES.has(response.status);
-          error.retryAfterMs = retryAfter;
-          throw error;
+          if (html.length > 4 * 1024 * 1024) throw new Error('PRC listing response exceeded the 4 MB limit.');
+          validatePrcHtml(response, html);
+          return { html, url: current.href };
         }
-
-        const html = await response.text();
-        const elapsedMs = Math.max(0, now() - started);
-        logDiagnostic(logger, {
-          requestUrl: current.href,
-          status: response.status,
-          elapsedMs,
-          attempt,
-          responseHeaders: headers,
-          responseBytes: new TextEncoder().encode(html).byteLength,
-        });
-        if (html.length > 4 * 1024 * 1024) throw new Error('PRC listing response exceeded the 4 MB limit.');
-        validatePrcHtml(response, html);
-        return { html, url: current.href };
+        throw new Error('PRC exceeded the redirect limit.');
+      } catch (error) {
+        lastError = error;
+        if (!response || error.name === 'TimeoutError' || error.name === 'AbortError') {
+          logDiagnostic(logger, {
+            requestUrl: current.href,
+            status: response?.status ?? null,
+            elapsedMs: Math.max(0, now() - started),
+            attempt,
+            responseHeaders: selectedHeaders(response?.headers),
+            error: `${error.name || 'Error'}: ${String(error.message || 'Request failed').slice(0, 200)}`,
+          });
+        }
+        const retryable = error.retryable || (!response && ['TypeError', 'TimeoutError', 'AbortError'].includes(error.name));
+        if (!retryable) {
+          shouldRetry = false;
+          break;
+        }
+        shouldRetry = true;
+        if (error.retryAfterMs !== null && error.retryAfterMs !== undefined) {
+          retryAfterForAttempt = Math.max(retryAfterForAttempt || 0, error.retryAfterMs);
+        }
       }
-      throw new Error('PRC exceeded the redirect limit.');
-    } catch (error) {
-      lastError = error;
-      if (!response || error.name === 'TimeoutError' || error.name === 'AbortError') {
-        logDiagnostic(logger, {
-          requestUrl: current.href,
-          status: response?.status ?? null,
-          elapsedMs: Math.max(0, now() - started),
-          attempt,
-          responseHeaders: selectedHeaders(response?.headers),
-          error: `${error.name || 'Error'}: ${String(error.message || 'Request failed').slice(0, 200)}`,
-        });
-      }
-      const retryable = error.retryable || (!response && ['TypeError', 'TimeoutError', 'AbortError'].includes(error.name));
-      if (!retryable || attempt >= maxAttempts) break;
-
-      const exponentialDelay = Math.min(maxBackoffMs, baseDelayMs * (2 ** (attempt - 1)));
-      const requestedDelay = error.retryAfterMs;
-      if (requestedDelay !== null && requestedDelay !== undefined && requestedDelay > maxRetryAfterMs) {
-        logDiagnostic(logger, {
-          event: 'prc_retry_deferred',
-          requestUrl: url.href,
-          status: response?.status ?? null,
-          elapsedMs: Math.max(0, now() - started),
-          attempt,
-          retryDeferred: true,
-          retryAfterMs: requestedDelay,
-        });
-        break;
-      }
-      const jitteredDelay = Math.round(exponentialDelay * (0.75 + Math.min(1, Math.max(0, random())) * 0.5));
-      const delay = Math.max(jitteredDelay, requestedDelay || 0);
-      logDiagnostic(logger, {
-        event: 'prc_retry_scheduled',
-        requestUrl: url.href,
-        status: response?.status ?? null,
-        elapsedMs: Math.max(0, now() - started),
-        attempt,
-        retryInMs: delay,
-      });
-      await sleepImpl(delay);
+      if (!shouldRetry) break;
     }
+    if (!shouldRetry || attempt >= maxAttempts) break;
+
+    const exponentialDelay = Math.min(maxBackoffMs, baseDelayMs * (2 ** (attempt - 1)));
+    if (retryAfterForAttempt !== null && retryAfterForAttempt > maxRetryAfterMs) {
+      logDiagnostic(logger, {
+        event: 'prc_retry_deferred',
+        requestUrl: url.href,
+        status: null,
+        elapsedMs: 0,
+        attempt,
+        retryDeferred: true,
+        retryAfterMs: retryAfterForAttempt,
+      });
+      break;
+    }
+    const jitteredDelay = Math.round(exponentialDelay * (0.75 + Math.min(1, Math.max(0, random())) * 0.5));
+    const delay = Math.max(jitteredDelay, retryAfterForAttempt || 0);
+    logDiagnostic(logger, {
+      event: 'prc_retry_scheduled',
+      requestUrl: url.href,
+      status: null,
+      elapsedMs: 0,
+      attempt,
+      retryInMs: delay,
+    });
+    await sleepImpl(delay);
   }
   throw new Error(`PRC request failed after bounded retries: ${lastError?.message || 'unknown network error'}`);
 }
