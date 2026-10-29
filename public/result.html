@@ -24,11 +24,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <script src="/result.js?v=20261026-8" defer></script>
+  <script src="/result.js?v=20261029-1" defer></script>
   <link rel="preload" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/Phosphor.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
   <script src="/theme.js?v=20261026-6"></script>
-  <link rel="stylesheet" href="/site.css?v=20261026-11">
+  <link rel="stylesheet" href="/site.css?v=20261029-1">
   <script src="/site.js?v=20261026-8" defer></script>
 </head>
 <body data-page="result">
@@ -40,6 +40,17 @@
       <h2 id="maintenance-title">We’re performing maintenance</h2>
       <p id="maintenance-message">Some parts of BoardExamTracker may be temporarily unavailable while we make improvements. Please check back soon.</p>
       <button class="maintenance-continue" type="button">Continue to website</button>
+    </div>
+  </dialog>
+  <dialog id="passer-celebration" class="passer-celebration" aria-labelledby="passer-celebration-title" aria-describedby="passer-celebration-message">
+    <div class="celebration-confetti" aria-hidden="true"></div>
+    <div class="celebration-inner">
+      <button class="celebration-close" type="button" aria-label="Close congratulations">×</button>
+      <span class="celebration-icon" aria-hidden="true"><i class="ph ph-confetti"></i></span>
+      <p class="celebration-eyebrow">A moment worth celebrating</p>
+      <h2 id="passer-celebration-title">Congratulations Passers!</h2>
+      <p id="passer-celebration-message">Your hard work paid off. Celebrate this incredible achievement!</p>
+      <button class="btn btn-primary celebration-continue" type="button">Continue to results</button>
     </div>
   </dialog>
   <header class="site-top">

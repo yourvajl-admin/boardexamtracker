@@ -19,6 +19,31 @@ function verifiedResultsFromSnapshot(verifiedResultUrls, fallbackResults) {
   return results;
 }
 
+async function triggerLiveDeploy({ newResults, fetchImpl, deployHookUrl, warn }) {
+  if (!Number.isFinite(newResults) || newResults <= 0) return null;
+  const hookUrl = typeof deployHookUrl === 'string' ? deployHookUrl.trim() : (process.env.VERCEL_DEPLOY_HOOK_URL || '').trim();
+  if (!hookUrl) return null;
+  try {
+    const response = await fetchImpl(hookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'BoardExamTracker live deploy trigger',
+      },
+      body: JSON.stringify({ event: 'new-prc-result', newResults, triggeredAt: new Date().toISOString() }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      const payload = await response.text();
+      throw new Error(`Vercel deploy hook returned HTTP ${response.status}: ${payload.slice(0, 200)}`);
+    }
+    return response;
+  } catch (error) {
+    warn(`Could not trigger Vercel deploy hook: ${error.message}`);
+    return null;
+  }
+}
+
 async function runScheduledCheck({
   secret = process.env.CRON_SECRET,
   verifiedResultUrls = process.env.VERIFIED_RESULT_URLS,
@@ -74,6 +99,15 @@ async function runScheduledCheck({
   if (process.env.GITHUB_STEP_SUMMARY) {
     const fs = require('node:fs');
     fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### PRC result check\n\n${summary}\n`);
+  }
+
+  if (!result.initialized && !result.skipped && result.newResults > 0) {
+    await triggerLiveDeploy({
+      newResults: Number(result.newResults) || 0,
+      fetchImpl,
+      deployHookUrl: process.env.VERCEL_DEPLOY_HOOK_URL,
+      warn,
+    });
   }
 
   const announcements = [];

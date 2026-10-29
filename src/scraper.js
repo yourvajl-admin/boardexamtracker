@@ -2,7 +2,7 @@ const cheerio = require('cheerio');
 const { execFile } = require('node:child_process');
 const dns = require('node:dns');
 const { promisify } = require('node:util');
-const { extractAnnouncementDetails } = require('./announcement-details');
+const { extractAnnouncementDetails, rephraseResultDetails } = require('./announcement-details');
 const { PROFESSION_CATEGORIES, categorize } = require('./professions');
 
 // PRC's web server is intermittently unreachable over IPv6 from hosted runners.
@@ -77,39 +77,6 @@ function extractAnnouncementLinks(html, articleUrl) {
     }
   });
   return [...new Map(resources.map((resource) => [resource.url, resource])).values()];
-}
-
-function rephraseResultDetails(title, category, sourceText) {
-  const text = (sourceText || '').replace(/\s+/g, ' ');
-  const passMatch = text.match(/([\d,]+)\s+out of\s+([\d,]+)\s+passed the\s+(.+?)(?:\s+given by|\s+in\s+\d+\s+testing centers|\s+last\s+[A-Z]|\.|$)/i);
-  const titleSubject = title
-    .replace(/^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+/i, '')
-    .replace(/\s+results?\b.*$/i, '')
-    .replace(/^licensure examination for\s+/i, '')
-    .replace(/\s+(?:computer[- ]based\s+)?licensure examination.*$/i, '')
-    .replace(/\s+examination.*$/i, '')
-    .trim();
-  const subject = passMatch
-    ? passMatch[3].replace(/^licensure examination for\s+/i, '').replace(/\s+licensure examination$/i, '').replace(/\s+examination$/i, '').trim()
-    : category !== 'PRC Examination Result' ? category : titleSubject || 'professional';
-  const summary = passMatch
-    ? `${passMatch[1]} of ${passMatch[2]} candidates passed the ${subject} licensure exam.`
-    : `PRC published the results for the ${subject} licensure examination.`;
-  const facts = [];
-  const centers = text.match(/\b(\d{1,3})\s+testing centers\b/i);
-  if (centers) facts.push(`The exam was administered at ${centers[1]} testing centers.`);
-  const examPeriod = text.match(/\blast\s+((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})\b/i);
-  if (examPeriod) facts.push(`The examination took place in ${examPeriod[1]}.`);
-  const withheld = text.match(/with respect to\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*\((\d+)\)\s+examinees?[^.]*withheld/i);
-  if (withheld) facts.push(`PRC is still reviewing the results for ${withheld[1]} examinees.`);
-  const turnaround = (title + ' ' + text).match(/released in\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*(?:\(\d+\)\s*)?working days?/i);
-  if (turnaround) {
-    const numbers = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
-    const days = numbers[turnaround[1].toLowerCase()] || Number(turnaround[1]);
-    facts.push(`The results were posted ${days} working ${days === 1 ? 'day' : 'days'} after the exam ended.`);
-  }
-  if (!facts.length && !passMatch) facts.push(`The announcement was published by PRC on ${title.match(/\b\d{4}\b/)?.[0] || 'the date shown above'}.`);
-  return { summary, facts };
 }
 
 async function fetchAnnouncementLinks(articleUrl) {
@@ -187,7 +154,7 @@ function extractResults(html) {
     if (!date) return;
     const excerpt = container.find('p').first().text().replace(/\s+/g, ' ').trim() || text.replace(title, '').replace(/\d{1,2}\s+[A-Za-z]+,?\s+\d{4}/, '').trim();
     const category = categorize(title);
-    const details = rephraseResultDetails(title, category, excerpt);
+    const details = rephraseResultDetails(title, category, excerpt, { includePublicationFact: true });
     rows.push({ title, category, date, description: [details.summary, ...details.facts].join(' '), url });
   });
   const unique = new Map();

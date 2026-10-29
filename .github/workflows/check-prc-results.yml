@@ -1,8 +1,6 @@
 name: Automatic PRC exam result check
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       verified_result_urls:
@@ -15,22 +13,34 @@ permissions: {}
 
 jobs:
   check-results:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check required secret
+        id: configuration
+        env:
+          CRON_SECRET: ${{ secrets.BOARD_EXAMTRACKER_CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Missing repository secret BOARD_EXAMTRACKER_CRON_SECRET; skipping PRC check."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.configuration.outputs.configured == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.configuration.outputs.configured == 'true'
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
+        if: steps.configuration.outputs.configured == 'true'
       - name: Check official PRC feed and send new-result alerts
+        if: steps.configuration.outputs.configured == 'true'
         env:
           CRON_SECRET: ${{ secrets.BOARD_EXAMTRACKER_CRON_SECRET }}
           VERIFIED_RESULT_URLS: ${{ inputs.verified_result_urls }}
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
         run: |
-          if [ -z "$CRON_SECRET" ]; then
-            echo "Missing repository secret BOARD_EXAMTRACKER_CRON_SECRET" >&2
-            exit 1
-          fi
           node src/check-results.js

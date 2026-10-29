@@ -97,6 +97,16 @@ test('public result responses use a short edge cache', async () => {
   assert.match(cached.headers['cache-control'], /s-maxage=5/);
 });
 
+test('bundled result files load without a PRC refetch and use a short edge cache', async () => {
+  const response = await request('/api/announcement-links?url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-metallurgical-engineers-computer-based-licensure-examination-results-released');
+  assert.equal(response.status, 200);
+  assert.equal(response.data.cached, true);
+  assert.ok(response.data.resources.length > 0);
+  assert.match(response.headers['cache-control'], /s-maxage=300/);
+  assert.match(response.headers['cdn-cache-control'], /max-age=300/);
+  assert.match(response.headers['vercel-cdn-cache-control'], /max-age=300/);
+});
+
 test('new verified results persist and appear through the existing public results API once', async () => {
   const [result] = extractResults(chemistsListingFixture);
   assert.ok(result, 'the existing PRC parser recognizes the official Chemists announcement');

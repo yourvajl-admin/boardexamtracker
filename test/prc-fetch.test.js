@@ -39,12 +39,48 @@ test('retries HTTP 521 with exponential backoff and records every response safel
   await assert.rejects(fetchPrcPage(0, {
     fetchImpl: async () => { calls += 1; return makeResponse('origin unavailable', 521, { server: 'cloudflare', 'retry-after': '0' }); },
     sleepImpl: async (ms) => delays.push(ms),
+    random: () => 0.5,
     logger: (line) => logs.push(JSON.parse(line)),
   }), /HTTP 521/);
   assert.equal(calls, 3);
   assert.deepEqual(delays, [1000, 2000]);
   assert.deepEqual(logs.filter((entry) => entry.event === 'prc_http_attempt' && entry.status === 521).map((entry) => entry.requestUrl), [PRC_URL, PRC_URL, PRC_URL]);
   assert.ok(logs.some((entry) => entry.retryInMs === 1000));
+});
+
+test('rejects challenge pages and unexpected content types without publishing an empty result set', async () => {
+  await assert.rejects(fetchPrcPage(0, {
+    fetchImpl: async () => makeResponse('<html><title>Just a moment...</title><body>Checking your browser</body></html>'),
+    logger: () => {},
+  }), /access challenge/);
+  await assert.rejects(fetchPrcPage(0, {
+    fetchImpl: async () => new Response('{"error":"rate limited"}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    logger: () => {},
+  }), /unexpected content type/);
+});
+
+test('does not retry an explicit PRC access denial but retries rate limits with Retry-After', async () => {
+  let deniedCalls = 0;
+  await assert.rejects(fetchPrcPage(0, {
+    fetchImpl: async () => { deniedCalls += 1; return makeResponse('Forbidden', 403); },
+    logger: () => {},
+  }), /HTTP 403/);
+  assert.equal(deniedCalls, 1);
+
+  const delays = [];
+  let calls = 0;
+  const fetched = await fetchPrcPage(0, {
+    fetchImpl: async () => {
+      calls += 1;
+      return calls === 1 ? makeResponse('Slow down', 429, { 'retry-after': '1' }) : makeResponse(resultHtml);
+    },
+    sleepImpl: async (ms) => delays.push(ms),
+    random: () => 0,
+    logger: () => {},
+  });
+  assert.equal(fetched.html, resultHtml);
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [1000]);
 });
 
 test('honors Retry-After and defers a retry when the requested wait is too long', async () => {
@@ -67,6 +103,7 @@ test('retries a network timeout only a bounded number of times', async () => {
   await assert.rejects(fetchPrcPage(0, {
     fetchImpl: async () => { calls += 1; const error = new Error('request timed out'); error.name = 'TimeoutError'; throw error; },
     sleepImpl: async (ms) => delays.push(ms),
+    random: () => 0.5,
     logger: (line) => logs.push(JSON.parse(line)),
   }), /request timed out/);
   assert.equal(calls, 3);

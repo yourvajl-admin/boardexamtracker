@@ -6,6 +6,14 @@ const DIAGNOSTIC_HEADERS = [
   'cache-control', 'cf-cache-status', 'cf-ray', 'content-type', 'date', 'etag',
   'last-modified', 'retry-after', 'server', 'via', 'x-cache',
 ];
+const CHALLENGE_MARKERS = [
+  /cf-chl-/i,
+  /challenge-platform/i,
+  /just a moment/i,
+  /attention required/i,
+  /captcha/i,
+  /access denied/i,
+];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -32,11 +40,32 @@ function logDiagnostic(logger, fields) {
   logger(JSON.stringify({ event: fields.event || 'prc_http_attempt', timestamp: new Date().toISOString(), ...fields }));
 }
 
+function validatePrcHtml(response, html) {
+  const contentType = response.headers.get('content-type') || '';
+  if (!/\b(?:text\/html|application\/xhtml\+xml)\b/i.test(contentType)) {
+    const error = new Error(`PRC returned unexpected content type: ${contentType || 'missing'}.`);
+    error.retryable = false;
+    throw error;
+  }
+  const sample = String(html).slice(0, 200000);
+  if (CHALLENGE_MARKERS.some((marker) => marker.test(sample))) {
+    const error = new Error('PRC returned an access challenge or denial page.');
+    error.retryable = false;
+    throw error;
+  }
+  if (!/<(?:html|body|main|article|div)\b/i.test(sample)) {
+    const error = new Error('PRC returned an invalid HTML document.');
+    error.retryable = false;
+    throw error;
+  }
+}
+
 async function fetchPrcPage(page, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const sleepImpl = options.sleepImpl || sleep;
   const logger = options.logger || console.log;
   const now = options.now || Date.now;
+  const random = options.random || Math.random;
   const maxAttempts = Math.max(1, Math.min(5, options.maxAttempts || 3));
   const baseDelayMs = Math.max(250, options.baseDelayMs ?? 1000);
   const maxBackoffMs = Math.max(baseDelayMs, options.maxBackoffMs ?? 8000);
@@ -104,6 +133,7 @@ async function fetchPrcPage(page, options = {}) {
           responseBytes: new TextEncoder().encode(html).byteLength,
         });
         if (html.length > 4 * 1024 * 1024) throw new Error('PRC listing response exceeded the 4 MB limit.');
+        validatePrcHtml(response, html);
         return { html, url: current.href };
       }
       throw new Error('PRC exceeded the redirect limit.');
@@ -136,7 +166,8 @@ async function fetchPrcPage(page, options = {}) {
         });
         break;
       }
-      const delay = Math.max(exponentialDelay, requestedDelay || 0);
+      const jitteredDelay = Math.round(exponentialDelay * (0.75 + Math.min(1, Math.max(0, random())) * 0.5));
+      const delay = Math.max(jitteredDelay, requestedDelay || 0);
       logDiagnostic(logger, {
         event: 'prc_retry_scheduled',
         requestUrl: url.href,
@@ -151,4 +182,4 @@ async function fetchPrcPage(page, options = {}) {
   throw new Error(`PRC request failed after bounded retries: ${lastError?.message || 'unknown network error'}`);
 }
 
-module.exports = { PRC_URL, fetchPrcPage, retryAfterMs };
+module.exports = { PRC_URL, fetchPrcPage, retryAfterMs, validatePrcHtml };

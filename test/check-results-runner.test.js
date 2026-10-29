@@ -2,9 +2,60 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { extractResults } = require('../src/scraper');
 const { runScheduledCheck } = require('../src/check-results');
+const fallbackAnnouncementLinks = require('../src/fallback-announcement-links.json');
 
 const chemistsFixture = `<div class="views-row"><span>19 October, 2026</span><a href="/article/october-2026-chemists-computer-based-licensure-examination-and-chemical-technicians">October 2026 Chemists Computer-Based Licensure Examination and Chemical Technicians Licensure Examination Results Released in Three (3) Working Days</a><p>The Professional Regulation Commission announces the examination results.</p></div>`;
 const chemistsResult = extractResults(chemistsFixture)[0];
+
+test('the bundled announcement fallback includes the recent Metallurgical Engineers result files', () => {
+  const url = 'https://www.prc.gov.ph/article/october-2026-metallurgical-engineers-computer-based-licensure-examination-results-released';
+  const entry = fallbackAnnouncementLinks[url];
+  assert.ok(entry, 'expected the bundled fallback to include the Metallurgical Engineers announcement');
+  assert.equal(entry.resources.length >= 4, true);
+  assert.match(entry.resources[0].label, /Official Result/);
+  assert.match(entry.details.summary, /36 of 42/);
+});
+
+test('the scheduled runner triggers a live deploy hook after publishing a new result', async () => {
+  const previousHook = process.env.VERCEL_DEPLOY_HOOK_URL;
+  process.env.VERCEL_DEPLOY_HOOK_URL = 'https://example.vercel.app/api/deploy';
+  const requests = [];
+  try {
+    const result = await runScheduledCheck({
+      secret: 'test-only-secret',
+      verifiedResultUrls: '[]',
+      fetchResultsImpl: async ({ maxPage }) => {
+        assert.equal(maxPage, 2);
+        return [chemistsResult];
+      },
+      fetchAnnouncementLinksImpl: async (url) => ({
+        resources: [{ label: 'Full text of the Official Result', url: 'https://drive.google.com/file/d/mock-result/view' }],
+        details: { paragraphs: ['Result document summary from the official announcement.'] },
+        url,
+      }),
+      fetchImpl: async (url, options) => {
+        requests.push({ url, options });
+        if (url.endsWith('/check-results')) {
+          assert.deepEqual(JSON.parse(options.body).results, [chemistsResult]);
+          return new Response(JSON.stringify({ newResults: 1, recipients: 1, announcementUrls: [chemistsResult.url] }), { status: 200 });
+        }
+        if (url === 'https://example.vercel.app/api/deploy') {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        assert.match(url, /\/cache-announcement-links$/);
+        assert.equal(JSON.parse(options.body).announcements[0].url, chemistsResult.url);
+        return new Response(JSON.stringify({ saved: 1 }), { status: 200 });
+      },
+      write: () => {},
+    });
+
+    assert.equal(result.newResults, 1);
+    assert.equal(requests.some((request) => request.url === 'https://example.vercel.app/api/deploy'), true);
+  } finally {
+    if (previousHook === undefined) delete process.env.VERCEL_DEPLOY_HOOK_URL;
+    else process.env.VERCEL_DEPLOY_HOOK_URL = previousHook;
+  }
+});
 
 test('the scheduled runner forwards a parsed Chemists announcement and then caches its official files', async () => {
   const requests = [];

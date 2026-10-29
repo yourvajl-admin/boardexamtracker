@@ -1,5 +1,29 @@
 const resultContent = document.querySelector('#result-content');
 const resultSlug = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
+const passerCelebration = document.querySelector('#passer-celebration');
+let celebrationShown = false;
+
+function showPasserCelebration() {
+  if (celebrationShown) return;
+  celebrationShown = true;
+  const confetti = passerCelebration.querySelector('.celebration-confetti');
+  const colors = ['#0875f9', '#ffc857', '#ef476f', '#06d6a0', '#9b5de5'];
+  confetti.innerHTML = Array.from({ length: 48 }, (_, index) => {
+    const left = (index * 37) % 100;
+    const delay = (index % 12) * 0.035;
+    const duration = 2.2 + (index % 6) * 0.18;
+    const color = colors[index % colors.length];
+    const rotation = (index * 47) % 360;
+    return `<span style="--confetti-left:${left}%;--confetti-delay:${delay}s;--confetti-duration:${duration}s;--confetti-color:${color};--confetti-rotation:${rotation}deg"></span>`;
+  }).join('');
+  passerCelebration.showModal();
+}
+
+passerCelebration.querySelector('.celebration-close').addEventListener('click', () => passerCelebration.close());
+passerCelebration.querySelector('.celebration-continue').addEventListener('click', () => passerCelebration.close());
+passerCelebration.addEventListener('click', (event) => {
+  if (event.target === passerCelebration) passerCelebration.close();
+});
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -25,22 +49,11 @@ function canonicalAnnouncementUrl(value) {
   } catch { return ''; }
 }
 
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
 async function fetchAnnouncementLinks(articleUrl) {
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const response = await fetch(`/api/announcement-links?url=${encodeURIComponent(articleUrl)}`, { headers: { Accept: 'application/json' } });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not load the files linked by this announcement.');
-      return data;
-    } catch (error) {
-      lastError = error;
-      if (attempt < 2) await wait(1500 * (attempt + 1));
-    }
-  }
-  throw lastError || new Error('Could not load the files linked by this announcement.');
+  const response = await fetch(`/api/announcement-links?url=${encodeURIComponent(articleUrl)}`, { headers: { Accept: 'application/json' } });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load the files linked by this announcement.');
+  return data;
 }
 
 function previewUrl(value) {
@@ -76,6 +89,18 @@ function setText(selector, value) {
   if (element) element.textContent = value;
 }
 
+function descriptionHighlights(description, date) {
+  const sentences = String(description || '').match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+  const facts = sentences.slice(1).map((sentence) => sentence.trim()).filter(Boolean);
+  return facts.length ? facts.slice(0, 8) : [`PRC published this result on ${formatDate(date)}.`];
+}
+
+function renderHighlights(summary, facts) {
+  document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(summary)}</p>`;
+  const visibleFacts = facts.length ? facts : ['The official PRC result documents are available below.'];
+  document.querySelector('#result-facts').innerHTML = `<h3 class="facts-title">Key figures</h3><ul class="key-facts">${visibleFacts.map((fact) => `<li><i class="ph ph-check-circle" aria-hidden="true"></i>${escapeHtml(fact)}</li>`).join('')}</ul>`;
+}
+
 async function loadResult() {
   try {
     let response = await fetch('/api/results', { headers: { Accept: 'application/json' } });
@@ -91,6 +116,7 @@ async function loadResult() {
     }
     if (!item) throw new Error('This result could not be found in the available PRC results archive.');
 
+    showPasserCelebration();
     const canonical = `https://www.boardexamtracker.com/results/${encodeURIComponent(resultSlug)}`;
     const description = (item.description || `View the ${item.category || 'professional licensure'} result documents linked to this announcement.`).slice(0, 300);
     setMeta(item, description, canonical);
@@ -103,20 +129,18 @@ async function loadResult() {
     setText('#result-date', formatDate(item.date));
     setText('#aside-date', formatDate(item.date));
     document.querySelector('#result-source').href = announcementUrl || item.url;
-    document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(item.description || 'This page gathers the result files connected to the announcement. Review the available documents below and confirm important details in the source files.')}</p>`;
+    const fallbackSummary = (item.description || `PRC published the results for ${category}.`).split(/(?<=[.!?])\s+(?=[A-Z])/)[0];
+    renderHighlights(fallbackSummary, descriptionHighlights(item.description, item.date));
 
     const resources = document.querySelector('#detail-resources');
     try {
       if (!announcementUrl) throw new Error('The PRC announcement link is invalid.');
       const linksData = await fetchAnnouncementLinks(announcementUrl);
-      if (linksData.details?.paragraphs?.length) {
-        document.querySelector('#result-paragraphs').innerHTML = linksData.details.paragraphs.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join('');
-      } else if (linksData.details?.summary) {
-        document.querySelector('#result-paragraphs').innerHTML = `<p>${escapeHtml(linksData.details.summary)}</p>`;
-      }
-      document.querySelector('#result-facts').innerHTML = linksData.details?.facts?.length
-        ? `<h3 class="facts-title">Key figures</h3><ul class="key-facts">${linksData.details.facts.map((fact) => `<li><i class="ph ph-check-circle" aria-hidden="true"></i>${escapeHtml(fact)}</li>`).join('')}</ul>`
-        : '';
+      const officialFacts = Array.isArray(linksData.details?.facts) ? linksData.details.facts : [];
+      renderHighlights(
+        linksData.details?.summary || fallbackSummary,
+        officialFacts.length ? officialFacts : descriptionHighlights(item.description, item.date),
+      );
       resources.innerHTML = linksData.resources?.length
         ? `<div class="file-list">${linksData.resources.map(renderResource).join('')}</div>`
         : '<p class="detail-empty">No separate files were linked in this notice when we checked. Visit the original announcement for any later additions.</p>';

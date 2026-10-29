@@ -62,9 +62,26 @@ function announcementCacheKey(articleUrl) {
   return `${ANNOUNCEMENT_CACHE_KEY_PREFIX}${Buffer.from(articleUrl).toString('base64url')}`;
 }
 
+function findBundledAnnouncement(articleUrl) {
+  const normalizedUrl = normalizeUrl(articleUrl);
+  const targetUrl = normalizedUrl || articleUrl;
+  const targetPath = targetUrl ? new URL(targetUrl).pathname.replace(/\/+$/, '') : '';
+  const slugCore = targetPath ? targetPath.replace(/-(?:one|two|three|four|five|six|seven|eight|nine|ten)-\d+$/i, '').replace(/-(?:one|two|three|four|five|six|seven|eight|nine|ten)$/i, '').replace(/-\d+$/i, '') : '';
+
+  for (const [key, value] of Object.entries(bundledAnnouncementLinks)) {
+    const candidate = normalizeUrl(key);
+    if (!candidate) continue;
+    const candidatePath = new URL(candidate).pathname.replace(/\/+$/, '');
+    const candidateCore = candidatePath.replace(/-(?:one|two|three|four|five|six|seven|eight|nine|ten)-\d+$/i, '').replace(/-(?:one|two|three|four|five|six|seven|eight|nine|ten)$/i, '').replace(/-\d+$/i, '');
+    if (candidate === targetUrl || candidatePath === targetPath || candidateCore === slugCore) {
+      return { ...value, fetchedAt: 0, bundled: true };
+    }
+  }
+  return null;
+}
+
 async function getCachedAnnouncement(articleUrl) {
-  const bundled = bundledAnnouncementLinks[articleUrl];
-  const bundledValue = bundled ? { ...bundled, fetchedAt: 0, bundled: true } : null;
+  const bundledValue = findBundledAnnouncement(articleUrl);
   const memoryValue = announcementCache.get(articleUrl);
   const memoryTtl = memoryValue?.resources?.length ? 30 * 24 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
   if (memoryValue && Date.now() - memoryValue.fetchedAt < memoryTtl) {
@@ -964,7 +981,8 @@ app.all('/api/cron/check-status', async (req, res) => {
     }
     if (!['started', 'success', 'failure'].includes(action)) return res.status(400).json({ error: 'Invalid checker status action.' });
     const now = new Date().toISOString();
-    const patch = { state: action === 'started' ? 'running' : action === 'success' ? 'healthy' : 'error', lastAttemptAt: now };
+    const checker = typeof req.body?.checker === 'string' ? req.body.checker.replace(/[^a-z0-9-]/gi, '').slice(0, 80) : '';
+    const patch = { state: action === 'started' ? 'running' : action === 'success' ? 'healthy' : 'error', lastAttemptAt: now, ...(checker ? { lastChecker: checker } : {}) };
     if (action === 'success') Object.assign(patch, {
       lastSuccessAt: now,
       lastError: null,
@@ -1056,7 +1074,7 @@ app.post('/api/cron/check-results', async (req, res) => {
       const cache = setCache(mergeResultLists(getCache()?.results || [], latest));
       await persistResultCache(cache.results, cache.fetchedAt, archiveCacheLoaded);
       const announcementUrls = await missingAnnouncementUrls(latest);
-      await saveResultsCheckStatus({ state: 'healthy', lastAttemptAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), lastError: null, lastResultCount: latest.length, lastPublishedCount: 0, lastPageCount: Number(req.body?.pages) || 0 });
+      await saveResultsCheckStatus({ state: 'healthy', lastAttemptAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), lastError: null, ...(typeof req.body?.checker === 'string' ? { lastChecker: req.body.checker.replace(/[^a-z0-9-]/gi, '').slice(0, 80) } : {}), lastResultCount: latest.length, lastPublishedCount: 0, lastPageCount: Number(req.body?.pages) || 0 });
       return res.json({ initialized: true, newResults: 0, announcementUrls, message: 'Saved current PRC results as the notification baseline.' });
     }
 
@@ -1079,7 +1097,7 @@ app.post('/api/cron/check-results', async (req, res) => {
     const mergedUrls = [...new Set([...latest.map((result) => result.url), ...knownUrls])].slice(0, 5000);
     await redisCommand('SET', KNOWN_RESULTS_KEY, JSON.stringify(mergedUrls));
     const announcementUrls = await missingAnnouncementUrls([...newResults, ...latest]);
-    await saveResultsCheckStatus({ state: 'healthy', lastAttemptAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), lastError: null, lastResultCount: latest.length, lastPublishedCount: newResults.length, lastPageCount: Number(req.body?.pages) || 0 });
+    await saveResultsCheckStatus({ state: 'healthy', lastAttemptAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), lastError: null, ...(typeof req.body?.checker === 'string' ? { lastChecker: req.body.checker.replace(/[^a-z0-9-]/gi, '').slice(0, 80) } : {}), lastResultCount: latest.length, lastPublishedCount: newResults.length, lastPageCount: Number(req.body?.pages) || 0 });
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed, announcementUrls });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
@@ -1217,17 +1235,27 @@ app.get('/api/announcement-links', async (req, res) => {
   if (!articleUrl || !(articlePath.startsWith('/article/') || /^\/node\/\d+$/.test(articlePath))) {
     return res.status(400).json({ error: 'A valid PRC announcement URL is required.' });
   }
+  const cacheControl = 'public, max-age=0, s-maxage=300, stale-while-revalidate=3600';
+  const cdnCacheControl = 'public, max-age=300, stale-while-revalidate=3600';
+  const sendCachedJson = (body) => res
+    .set('Cache-Control', cacheControl)
+    .set('CDN-Cache-Control', cdnCacheControl)
+    .set('Vercel-CDN-Cache-Control', cdnCacheControl)
+    .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
-  if (cached && cached.resources?.length && Array.isArray(cached.details?.paragraphs) && cached.details.paragraphs.length) {
-    return res.json({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
+  const hasCachedDetails = typeof cached?.details?.summary === 'string'
+    && Boolean(cached.details.summary)
+    && Array.isArray(cached.details.facts);
+  if (cached?.resources?.length && hasCachedDetails) {
+    return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
     const announcement = await fetchAnnouncementLinks(articleUrl);
     if (cached && !announcement.resources.length) announcement.resources = cached.resources;
     await saveAnnouncementCache(articleUrl, announcement);
-    return res.json({ url: articleUrl, ...announcement, cached: false });
+    return sendCachedJson({ url: articleUrl, ...announcement, cached: false });
   } catch (error) {
-    if (cached) return res.json({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true, refreshError: true });
+    if (cached?.resources?.length) return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true, refreshError: true });
     return res.status(502).json({ error: 'Could not retrieve links from this PRC announcement.', message: error.message });
   }
 });
