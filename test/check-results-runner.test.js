@@ -68,6 +68,30 @@ test('the scheduled runner triggers a live deploy hook after publishing a new re
   }
 });
 
+test('the scheduled runner retries a transient publishing API 502', async () => {
+  let requests = 0;
+  const waits = [];
+  const warnings = [];
+  const result = await runScheduledCheck({
+    secret: 'test-only-secret',
+    verifiedResultUrls: '[]',
+    fetchResultsImpl: async () => [chemistsResult],
+    fetchImpl: async () => {
+      requests += 1;
+      if (requests === 1) return new Response('upstream unavailable', { status: 502 });
+      return new Response(JSON.stringify({ newResults: 0, recipients: 0, announcementUrls: [] }));
+    },
+    wait: async (ms) => waits.push(ms),
+    warn: (message) => warnings.push(message),
+    write: () => {},
+  });
+
+  assert.equal(result.newResults, 0);
+  assert.equal(requests, 2);
+  assert.deepEqual(waits, [1000]);
+  assert.match(warnings.join('\n'), /HTTP 502.*retrying/);
+});
+
 test('the scheduled runner forwards a parsed Chemists announcement and then caches its official files', async () => {
   const requests = [];
   const output = [];

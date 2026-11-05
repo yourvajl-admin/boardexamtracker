@@ -2,6 +2,30 @@ const { fetchResults, fetchAnnouncementLinks } = require('./scraper');
 const { results: bundledFallbackResults } = require('./fallback-results.json');
 
 const VERIFIED_RESULT_URL_PATTERN = /^https:\/\/www\.prc\.gov\.ph\/article\/[a-z0-9-]+$/i;
+const CHECK_REQUEST_RETRY_DELAYS = [1000, 4000];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchCheckResponse(fetchImpl, url, options, { wait, warn }) {
+  for (let attempt = 0; ; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(60_000) });
+    } catch (error) {
+      if (attempt >= CHECK_REQUEST_RETRY_DELAYS.length) throw error;
+      warn(`Checker API request failed (${error.message}); retrying in ${CHECK_REQUEST_RETRY_DELAYS[attempt] / 1000}s.`);
+      await wait(CHECK_REQUEST_RETRY_DELAYS[attempt]);
+      continue;
+    }
+
+    if (![502, 503, 504].includes(response.status) || attempt >= CHECK_REQUEST_RETRY_DELAYS.length) return response;
+    const message = await response.text();
+    warn(`Checker API returned HTTP ${response.status} (${message.slice(0, 200)}); retrying in ${CHECK_REQUEST_RETRY_DELAYS[attempt] / 1000}s.`);
+    await wait(CHECK_REQUEST_RETRY_DELAYS[attempt]);
+  }
+}
 
 function verifiedResultsFromSnapshot(verifiedResultUrls, fallbackResults) {
   let requestedUrls;
@@ -51,6 +75,7 @@ async function runScheduledCheck({
   fetchAnnouncementLinksImpl = fetchAnnouncementLinks,
   fallbackResults = bundledFallbackResults,
   fetchImpl = fetch,
+  wait = sleep,
   siteUrl = (process.env.SITE_CRON_URL || 'https://boardexamtracker.vercel.app/api/cron/check-results').replace(/\/$/, ''),
   write = (value) => process.stdout.write(value),
   warn = (value) => console.warn(value),
@@ -77,7 +102,7 @@ async function runScheduledCheck({
 
   // Publish only after source retrieval and parsing succeeded. This runner
   // calls the existing authenticated API; Redis remains the source of stored state.
-  const response = await fetchImpl(siteUrl, {
+  const response = await fetchCheckResponse(fetchImpl, siteUrl, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${secret}`,
@@ -85,8 +110,7 @@ async function runScheduledCheck({
       'User-Agent': 'BoardExamTracker scheduled result checker',
     },
     body: JSON.stringify({ results, fallback: usedFallback }),
-    signal: AbortSignal.timeout(60_000),
-  });
+  }, { wait, warn });
   const message = await response.text();
   if (!response.ok) throw new Error(`BoardExamTracker returned HTTP ${response.status}: ${message}`);
   const result = JSON.parse(message);

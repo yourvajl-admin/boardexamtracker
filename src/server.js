@@ -1132,8 +1132,9 @@ app.post('/api/cron/check-results', async (req, res) => {
     return res.json({ initialized: false, newResults: newResults.length, recipients: delivery.recipients, failed: delivery.failed, announcementUrls });
   } catch (error) {
     console.error('Scheduled PRC result check failed:', error.message);
-    try { await saveResultsCheckStatus({ state: 'error', lastAttemptAt: new Date().toISOString(), lastError: String(error.message || 'Check failed.').slice(0, 1200) }); } catch { /* Preserve the original failure if status storage is also down. */ }
-    return res.status(502).json({ error: 'Scheduled PRC result check failed.' });
+    const detail = String(error.message || 'Check failed.').replace(/[\r\n\t]+/g, ' ').slice(0, 500);
+    try { await saveResultsCheckStatus({ state: 'error', lastAttemptAt: new Date().toISOString(), lastError: detail }); } catch { /* Preserve the original failure if status storage is also down. */ }
+    return res.status(502).json({ error: 'Scheduled PRC result check failed.', detail });
   } finally {
     if (ownedLockToken) {
       try {

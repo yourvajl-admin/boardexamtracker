@@ -251,6 +251,7 @@ test('an invalid or failed check leaves the already published result visible', a
     body: { results: [], pages: 0 },
   });
   assert.equal(failed.status, 502);
+  assert.match(failed.data.detail, /No validated, dated result announcements/);
   assert.equal(values.get('boardexamtracker:known-results'), knownBefore, 'a failed result fetch does not change the notification baseline');
   const visible = await request('/api/results');
   assert.ok(visible.data.results.some((item) => item.url.endsWith('/october-2026-chemists-computer-based-licensure-examination-and-chemical-technicians')));
