@@ -639,3 +639,216 @@ select.field:disabled { opacity: 0.6; cursor: not-allowed; }
 :root[data-theme="dark"] .donation-qr-section { border-color: var(--line-strong); background: linear-gradient(180deg, #15243a, #132033); }
 :root[data-theme="dark"] .donation-qr-label { color: var(--ink); }
 :root[data-theme="dark"] .donation-qr-frame { border-color: var(--line-strong); background: #fff; }
+
+/* Oath-taking outfit collection (result page overlay) */
+.outfit-banner-button {
+  border-color: rgba(135, 206, 250, 0.55);
+  background: rgba(8, 117, 249, 0.18);
+}
+.outfit-banner-button:hover {
+  background: rgba(8, 117, 249, 0.3);
+  border-color: rgba(135, 206, 250, 0.8);
+}
+
+.outfit-overlay {
+  width: min(1120px, calc(100vw - 32px));
+  max-width: 1120px;
+  height: min(90vh, 920px);
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--page);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.outfit-overlay::backdrop {
+  background: rgba(8, 36, 74, 0.58);
+  backdrop-filter: blur(3px);
+}
+.outfit-overlay[open] {
+  display: flex;
+  animation: donation-dialog-in 0.18s ease-out;
+}
+.outfit-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+}
+.outfit-overlay-head {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 26px 28px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.outfit-overlay-heading {
+  min-width: 0;
+}
+.outfit-overlay-heading .eyebrow {
+  margin: 0 0 6px;
+  color: var(--blue-text);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.outfit-overlay-heading h2 {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 32px);
+  line-height: 1.15;
+}
+.outfit-overlay-heading p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.outfit-overlay-close {
+  position: static;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 20px;
+}
+.outfit-overlay-close:hover {
+  background: var(--blue-soft);
+  color: var(--blue-text);
+}
+.outfit-overlay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 28px 28px;
+  overscroll-behavior: contain;
+}
+.outfit-state {
+  margin: 0;
+  padding: 32px 20px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 15px;
+  text-align: center;
+}
+.outfit-state.is-error {
+  color: #a44040;
+  border-color: #e4b9b9;
+  background: #fff8f8;
+}
+.outfit-state button {
+  margin-top: 14px;
+}
+.outfit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 20px;
+}
+.outfit-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.outfit-card-image {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.outfit-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.outfit-card-image .outfit-image-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--muted);
+  font-size: 14px;
+}
+.outfit-card-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 14px;
+}
+.outfit-card-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.outfit-card .btn {
+  width: 100%;
+  margin-top: auto;
+}
+.outfit-overlay-note {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  .outfit-overlay {
+    width: calc(100vw - 20px);
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 16px;
+  }
+  .outfit-overlay-head,
+  .outfit-overlay-body {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .outfit-overlay-head {
+    padding-top: 20px;
+    padding-bottom: 16px;
+  }
+  .outfit-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+  }
+  .outfit-card {
+    padding: 10px;
+    border-radius: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .outfit-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .outfit-card-title {
+    font-size: 14px;
+  }
+  .outfit-card .btn {
+    min-height: 40px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+}

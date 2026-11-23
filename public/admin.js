@@ -29,6 +29,18 @@ const donationCurrentStatus = document.querySelector('#donation-current-status')
 const donationStatus = document.querySelector('#donation-status');
 const donationSaveButton = document.querySelector('#donation-save-button');
 const donationRemoveButton = document.querySelector('#donation-remove-button');
+const outfitForm = document.querySelector('#outfit-form');
+const outfitIdInput = document.querySelector('#outfit-id');
+const outfitTitleInput = document.querySelector('#outfit-title');
+const outfitAffiliateUrlInput = document.querySelector('#outfit-affiliate-url');
+const outfitStatusInput = document.querySelector('#outfit-status');
+const outfitImageInput = document.querySelector('#outfit-image');
+const outfitImagePreview = document.querySelector('#outfit-image-preview');
+const outfitPreviewTitle = document.querySelector('#outfit-preview-title');
+const outfitAdminStatus = document.querySelector('#outfit-admin-status');
+const outfitList = document.querySelector('#admin-outfit-list');
+const outfitSaveButton = document.querySelector('#outfit-save-button');
+const outfitCancelEditButton = document.querySelector('#outfit-cancel-edit');
 let subscribers = [];
 let viewerRefreshTimer = null;
 let blogPosts = [];
@@ -37,6 +49,9 @@ let removeExistingBlogPhoto = false;
 let blogPhotoObjectUrl = null;
 let donationSelectedObjectUrl = null;
 let donationHasQr = false;
+let outfits = [];
+let editingOutfitId = null;
+let outfitSelectedObjectUrl = null;
 let subscriberPage = 1;
 const SUBSCRIBERS_PER_PAGE = 50;
 
@@ -614,6 +629,7 @@ async function loadDashboard() {
     await loadDonationSettings();
     await refreshViewerCount();
     await loadAdminBlogPosts();
+    await loadAdminOutfits();
     if (!viewerRefreshTimer) viewerRefreshTimer = setInterval(refreshViewerCount, 15_000);
   } catch (error) {
     if (error.message.includes('Admin sign-in required')) showView('login-view');
@@ -707,6 +723,330 @@ themeToggle.addEventListener('click', () => {
 });
 
 setTheme(window.localStorage.getItem('boardexamtracker-admin-theme') === 'dark' ? 'dark' : 'light');
+
+
+
+function setOutfitAdminStatus(message, type = '') {
+  if (!outfitAdminStatus) return;
+  outfitAdminStatus.textContent = message;
+  outfitAdminStatus.className = `status ${type}`.trim();
+}
+
+function clearOutfitSelectedObjectUrl() {
+  if (outfitSelectedObjectUrl) URL.revokeObjectURL(outfitSelectedObjectUrl);
+  outfitSelectedObjectUrl = null;
+}
+
+function currentEditingOutfit() {
+  return outfits.find((outfit) => outfit.id === editingOutfitId) || null;
+}
+
+function showOutfitPreviewImage(src, alt) {
+  if (!outfitImagePreview) return;
+  outfitImagePreview.replaceChildren();
+  if (!src) {
+    const empty = document.createElement('p');
+    empty.className = 'donation-preview-empty';
+    empty.textContent = 'No image selected.';
+    outfitImagePreview.append(empty);
+    return;
+  }
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = alt || 'Outfit preview';
+  outfitImagePreview.append(img);
+}
+
+function renderOutfitPreview() {
+  const file = outfitImageInput?.files?.[0];
+  if (file) {
+    clearOutfitSelectedObjectUrl();
+    outfitSelectedObjectUrl = URL.createObjectURL(file);
+    if (outfitPreviewTitle) outfitPreviewTitle.textContent = editingOutfitId ? 'New image preview' : 'Upload preview';
+    showOutfitPreviewImage(outfitSelectedObjectUrl, 'Selected outfit image preview');
+    return;
+  }
+
+  const editing = currentEditingOutfit();
+  if (editing?.imageUrl) {
+    if (outfitPreviewTitle) outfitPreviewTitle.textContent = 'Current outfit image';
+    showOutfitPreviewImage(editing.imageUrl, `${editing.title} preview`);
+    return;
+  }
+
+  if (outfitPreviewTitle) outfitPreviewTitle.textContent = 'Upload preview';
+  showOutfitPreviewImage(null);
+}
+
+function resetOutfitForm() {
+  editingOutfitId = null;
+  if (outfitForm) outfitForm.reset();
+  if (outfitIdInput) outfitIdInput.value = '';
+  if (outfitStatusInput) outfitStatusInput.value = 'published';
+  if (outfitSaveButton) outfitSaveButton.textContent = 'Publish outfit';
+  if (outfitCancelEditButton) outfitCancelEditButton.hidden = true;
+  if (outfitImageInput) outfitImageInput.required = true;
+  clearOutfitSelectedObjectUrl();
+  renderOutfitPreview();
+}
+
+function startEditOutfit(outfit) {
+  editingOutfitId = outfit.id;
+  if (outfitIdInput) outfitIdInput.value = outfit.id;
+  if (outfitTitleInput) outfitTitleInput.value = outfit.title || '';
+  if (outfitAffiliateUrlInput) outfitAffiliateUrlInput.value = outfit.affiliateUrl || '';
+  if (outfitStatusInput) outfitStatusInput.value = outfit.status === 'unpublished' ? 'unpublished' : 'published';
+  if (outfitImageInput) {
+    outfitImageInput.value = '';
+    outfitImageInput.required = false;
+  }
+  if (outfitSaveButton) outfitSaveButton.textContent = 'Save changes';
+  if (outfitCancelEditButton) outfitCancelEditButton.hidden = false;
+  clearOutfitSelectedObjectUrl();
+  renderOutfitPreview();
+  setOutfitAdminStatus(`Editing “${outfit.title}”. Save changes to update this outfit.`);
+  outfitForm?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function renderAdminOutfits() {
+  if (!outfitList) return;
+  outfitList.replaceChildren();
+
+  if (!Array.isArray(outfits) || outfits.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'admin-outfit-empty';
+    empty.textContent = 'No outfits saved yet. Add an outfit above to display it in the public collection.';
+    outfitList.append(empty);
+    return;
+  }
+
+  for (const outfit of outfits) {
+    const card = document.createElement('article');
+    card.className = 'admin-outfit-card';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'admin-outfit-thumb';
+    if (outfit.imageUrl) {
+      const img = document.createElement('img');
+      img.src = outfit.imageUrl;
+      img.alt = '';
+      img.loading = 'lazy';
+      thumb.append(img);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'admin-outfit-thumb-empty';
+      fallback.textContent = 'No image';
+      thumb.append(fallback);
+    }
+
+    const copy = document.createElement('div');
+    copy.className = 'admin-outfit-copy';
+
+    const title = document.createElement('h4');
+    title.textContent = outfit.title || 'Untitled outfit';
+
+    const meta = document.createElement('div');
+    meta.className = 'admin-outfit-meta';
+    const badge = document.createElement('span');
+    const published = outfit.status !== 'unpublished';
+    badge.className = `outfit-status-badge ${published ? 'is-published' : 'is-unpublished'}`;
+    badge.textContent = published ? 'Published' : 'Unpublished';
+    meta.append(badge);
+
+    const url = document.createElement('p');
+    url.className = 'admin-outfit-url';
+    url.textContent = outfit.affiliateUrl || 'No affiliate link';
+
+    const actions = document.createElement('div');
+    actions.className = 'admin-outfit-actions';
+
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.className = 'secondary-button';
+    editButton.textContent = 'Edit';
+    editButton.addEventListener('click', () => startEditOutfit(outfit));
+
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'toggle-outfit-status';
+    toggleButton.textContent = published ? 'Unpublish' : 'Publish';
+    toggleButton.addEventListener('click', () => toggleOutfitStatus(outfit, toggleButton));
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'unsubscribe-button';
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', () => deleteOutfit(outfit, deleteButton));
+
+    actions.append(editButton, toggleButton, deleteButton);
+    copy.append(title, meta, url, actions);
+    card.append(thumb, copy);
+    outfitList.append(card);
+  }
+}
+
+async function loadAdminOutfits() {
+  if (!outfitList) return;
+  try {
+    const data = await request('/api/admin/outfits');
+    if (data.persistentStorage === false) {
+      outfits = [];
+      renderAdminOutfits();
+      if (outfitSaveButton) outfitSaveButton.disabled = true;
+      setOutfitAdminStatus('Shared storage is required to manage oath-taking outfits.', 'bad');
+      return;
+    }
+    outfits = Array.isArray(data.outfits) ? data.outfits : [];
+    if (outfitSaveButton) outfitSaveButton.disabled = false;
+    renderAdminOutfits();
+    setOutfitAdminStatus(`${outfits.length} ${outfits.length === 1 ? 'outfit' : 'outfits'} saved.`, 'good');
+  } catch (error) {
+    if (outfitSaveButton) outfitSaveButton.disabled = true;
+    setOutfitAdminStatus(error.message, 'bad');
+  }
+}
+
+async function compressOutfitImage(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error('Choose a JPG, PNG, or WebP outfit image.');
+  }
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1200 / bitmap.width, 1200 / bitmap.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' });
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  let blob;
+  for (const quality of [0.84, 0.76, 0.68, 0.6, 0.52]) {
+    blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
+    if (blob && blob.size <= 950_000) break;
+  }
+  if (!blob || blob.size > 1_000_000) throw new Error('This outfit image is too large to optimize. Choose a smaller image.');
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read the selected outfit image.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function toggleOutfitStatus(outfit, button) {
+  const nextStatus = outfit.status === 'unpublished' ? 'published' : 'unpublished';
+  button.disabled = true;
+  try {
+    const data = await request(`/api/admin/outfits/${encodeURIComponent(outfit.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: outfit.title,
+        affiliateUrl: outfit.affiliateUrl,
+        status: nextStatus,
+      }),
+    });
+    outfits = outfits.map((item) => (item.id === outfit.id ? data.outfit : item));
+    renderAdminOutfits();
+    setOutfitAdminStatus(`“${outfit.title}” is now ${nextStatus}.`, 'good');
+  } catch (error) {
+    button.disabled = false;
+    setOutfitAdminStatus(error.message, 'bad');
+  }
+}
+
+async function deleteOutfit(outfit, button) {
+  if (!window.confirm(`Delete “${outfit.title}” from the outfit collection? This cannot be undone.`)) return;
+  button.disabled = true;
+  try {
+    await request(`/api/admin/outfits/${encodeURIComponent(outfit.id)}`, { method: 'DELETE' });
+    outfits = outfits.filter((item) => item.id !== outfit.id);
+    if (editingOutfitId === outfit.id) resetOutfitForm();
+    renderAdminOutfits();
+    setOutfitAdminStatus(`Deleted “${outfit.title}”.`, 'good');
+  } catch (error) {
+    button.disabled = false;
+    setOutfitAdminStatus(error.message, 'bad');
+  }
+}
+
+outfitImageInput?.addEventListener('change', () => {
+  renderOutfitPreview();
+});
+
+outfitStatusInput?.addEventListener('change', () => {
+  if (!outfitSaveButton) return;
+  if (editingOutfitId) {
+    outfitSaveButton.textContent = 'Save changes';
+  } else {
+    outfitSaveButton.textContent = outfitStatusInput.value === 'unpublished' ? 'Save outfit' : 'Publish outfit';
+  }
+});
+
+outfitCancelEditButton?.addEventListener('click', () => {
+  resetOutfitForm();
+  setOutfitAdminStatus('Edit canceled.', 'good');
+});
+
+outfitForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!outfitSaveButton) return;
+
+  const title = outfitTitleInput.value.trim();
+  const affiliateUrl = outfitAffiliateUrlInput.value.trim();
+  const status = outfitStatusInput.value === 'unpublished' ? 'unpublished' : 'published';
+  const selectedImage = outfitImageInput.files?.[0];
+
+  if (!title) {
+    setOutfitAdminStatus('Enter an outfit title.', 'bad');
+    return;
+  }
+  if (!affiliateUrl) {
+    setOutfitAdminStatus('Enter an affiliate purchase link.', 'bad');
+    return;
+  }
+  if (!editingOutfitId && !selectedImage) {
+    setOutfitAdminStatus('Choose an outfit image to preview and save.', 'bad');
+    return;
+  }
+
+  outfitSaveButton.disabled = true;
+  if (outfitCancelEditButton) outfitCancelEditButton.disabled = true;
+  setOutfitAdminStatus(editingOutfitId ? 'Saving outfit changes…' : 'Saving outfit…');
+  try {
+    const payload = { title, affiliateUrl, status };
+    if (selectedImage) payload.image = await compressOutfitImage(selectedImage);
+
+    const data = editingOutfitId
+      ? await request(`/api/admin/outfits/${encodeURIComponent(editingOutfitId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      : await request('/api/admin/outfits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+    if (editingOutfitId) {
+      outfits = outfits.map((item) => (item.id === data.outfit.id ? data.outfit : item));
+    } else {
+      outfits = [data.outfit, ...outfits];
+    }
+    resetOutfitForm();
+    renderAdminOutfits();
+    setOutfitAdminStatus(editingOutfitId ? 'Outfit updated.' : 'Outfit saved.', 'good');
+  } catch (error) {
+    setOutfitAdminStatus(error.message, 'bad');
+  } finally {
+    outfitSaveButton.disabled = false;
+    if (outfitCancelEditButton) outfitCancelEditButton.disabled = false;
+  }
+});
+
+resetOutfitForm();
 
 const tileTriggers = document.querySelectorAll('.admin-tile-trigger');
 const tileModals = document.querySelectorAll('.admin-tile-modal');

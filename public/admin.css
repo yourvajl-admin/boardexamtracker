@@ -100,3 +100,41 @@ body.admin-tile-open{overflow:hidden}
 :root[data-theme="dark"] .donation-preview-card{border-color:#34465d;background:#1b2c42}
 :root[data-theme="dark"] .donation-qr-preview{border-color:#40536c;background:#101b2c}
 :root[data-theme="dark"] .donation-qr-preview img{background:#fff}
+
+/* Oath-taking outfit manager */
+.outfit-admin-form { margin-top: 12px; }
+.outfit-form-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr); gap: 18px; align-items: start; }
+.outfit-form-fields { display: grid; gap: 0; }
+.outfit-form-fields label { margin: 12px 0 6px; font-size: 13px; font-weight: 700; }
+.outfit-form-fields input:not([type=file]), .outfit-form-fields select { width: 100%; height: 44px; padding: 0 12px; border: 1px solid #cfdbe8; border-radius: 9px; font: inherit; }
+.outfit-form-fields input[type=file] { width: 100%; padding: 8px; border: 1px solid #cfdbe8; border-radius: 9px; background: #fff; color: var(--muted); font-size: 12px; }
+.outfit-help { margin-top: 6px; display: block; }
+.outfit-preview-panel .donation-preview-card { height: 100%; }
+.outfit-image-preview { aspect-ratio: 1 / 1; min-height: 220px; }
+.outfit-image-preview img { width: 100%; height: 100%; object-fit: cover; }
+.outfit-form-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+.outfit-form-actions button { margin: 0; }
+.outfit-admin-list-wrap { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.16); }
+.outfit-admin-list-title { margin: 0 0 12px; font-size: 18px; }
+.admin-outfit-list { display: grid; gap: 12px; }
+.admin-outfit-empty { margin: 0; padding: 16px 10px; color: #d7e9fa; font-size: 13px; text-align: center; border: 1px dashed rgba(255,255,255,.2); border-radius: 12px; }
+.admin-outfit-card { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; padding: 12px; border: 1px solid rgba(255,255,255,.16); border-radius: 12px; background: rgba(255,255,255,.08); }
+.admin-outfit-thumb { width: 96px; height: 96px; border-radius: 10px; overflow: hidden; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); }
+.admin-outfit-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.admin-outfit-thumb-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: #d7e9fa; font-size: 11px; text-align: center; padding: 6px; }
+.admin-outfit-copy { min-width: 0; }
+.admin-outfit-copy h4 { margin: 0; font-size: 15px; line-height: 1.35; color: #fff; }
+.admin-outfit-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+.outfit-status-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.outfit-status-badge.is-published { background: rgba(22, 128, 95, .35); color: #d9fff1; border: 1px solid rgba(120, 214, 181, .35); }
+.outfit-status-badge.is-unpublished { background: rgba(154, 91, 0, .28); color: #ffe8bf; border: 1px solid rgba(255, 200, 87, .3); }
+.admin-outfit-url { margin: 8px 0 0; font-size: 12px; line-height: 1.45; color: #d7e9fa; word-break: break-all; }
+.admin-outfit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.admin-outfit-actions button { min-height: 32px; margin: 0; padding: 0 11px; font-size: 11px; }
+.admin-outfit-actions .toggle-outfit-status { border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12); color: #fff; border-radius: 999px; font-weight: 700; cursor: pointer; }
+
+@media (max-width: 720px) {
+  .outfit-form-grid { grid-template-columns: 1fr; }
+  .admin-outfit-card { grid-template-columns: 82px minmax(0, 1fr); gap: 10px; }
+  .admin-outfit-thumb { width: 82px; height: 82px; }
+}

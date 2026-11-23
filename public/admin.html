@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#101b2c">
   <title>Admin | BoardExamTracker</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/admin.css?v=20261123-4">
-  <script src="/admin.js?v=20261123-4" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=20261123-5">
+  <script src="/admin.js?v=20261123-5" defer></script>
 </head>
 <body>
   <main class="admin-shell">
@@ -146,6 +146,57 @@
             </section>
           </div>
         </div>
+
+        <div class="admin-card admin-tile outfit-admin-panel">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-outfits" data-tile-target="tile-outfits">
+            <span class="tile-title-wrap"><span class="eyebrow">AFFILIATE</span><span id="outfit-admin-heading" class="tile-title">Oath-Taking Outfit Manager</span></span>
+          </button>
+          <div id="tile-outfits" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="outfit-admin-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">AFFILIATE</span><h2 class="admin-tile-panel-title">Oath-Taking Outfit Manager</h2></div>
+              <div class="admin-tile-content">
+                <p>Upload and manage oath-taking outfit listings. Only published outfits appear in the public collection, and affiliate links are never shown to visitors.</p>
+                <form id="outfit-form" class="outfit-admin-form">
+                  <input id="outfit-id" type="hidden">
+                  <div class="outfit-form-grid">
+                    <div class="outfit-form-fields">
+                      <label for="outfit-title">Outfit Title</label>
+                      <input id="outfit-title" name="title" type="text" maxlength="180" required placeholder="e.g. White Filipiniana Dress">
+                      <label for="outfit-affiliate-url">Affiliate Purchase Link</label>
+                      <input id="outfit-affiliate-url" name="affiliateUrl" type="url" maxlength="2048" required placeholder="https://">
+                      <label for="outfit-status">Publish Status</label>
+                      <select id="outfit-status" name="status">
+                        <option value="published">Published</option>
+                        <option value="unpublished">Unpublished</option>
+                      </select>
+                      <label for="outfit-image">Outfit Image</label>
+                      <input id="outfit-image" name="image" type="file" accept="image/jpeg,image/png,image/webp">
+                      <small class="donation-help outfit-help">JPG, PNG, or WebP. Maximum 1 MB. Select an image to preview it before saving.</small>
+                    </div>
+                    <div class="outfit-preview-panel">
+                      <div class="donation-preview-card">
+                        <h3 id="outfit-preview-title">Upload preview</h3>
+                        <div id="outfit-image-preview" class="donation-qr-preview outfit-image-preview"><p class="donation-preview-empty">No image selected.</p></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="donation-actions outfit-form-actions">
+                    <button id="outfit-save-button" type="submit">Publish outfit</button>
+                    <button id="outfit-cancel-edit" class="secondary-button" type="button" hidden>Cancel edit</button>
+                  </div>
+                  <p id="outfit-admin-status" class="status" role="status" aria-live="polite"></p>
+                </form>
+                <div class="outfit-admin-list-wrap">
+                  <h3 class="outfit-admin-list-title">Saved outfits</h3>
+                  <div id="admin-outfit-list" class="admin-outfit-list" aria-live="polite"></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+
 
         <div class="admin-card admin-tile test-alert-panel">
           <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-alerts" data-tile-target="tile-alerts">

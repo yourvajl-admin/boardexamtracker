@@ -284,13 +284,136 @@ async function normalizeDonationQr(dataUrl) {
 }
 
 
+
+const OUTFITS_KEY = 'boardexamtracker:outfits';
+const OUTFIT_INDEX_KEY = 'boardexamtracker:outfits:index';
+const OUTFIT_IMAGE_KEY_PREFIX = 'boardexamtracker:outfit:image:';
+const OUTFIT_IMAGE_LIMIT_BYTES = 1_000_000;
+
+function outfitStorageReady(res) {
+  if (isPersistentStorageConfigured()) return true;
+  res.status(503).json({ error: 'Configure Upstash Redis REST credentials to manage oath-taking outfits.' });
+  return false;
+}
+
+function isValidOutfitId(id) {
+  return /^[0-9a-f-]{36}$/i.test(id);
+}
+
+function sanitizeOutfitTitle(value) {
+  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+}
+
+function normalizeOutfitStatus(value) {
+  return value === 'unpublished' ? 'unpublished' : 'published';
+}
+
+function normalizeAffiliateUrl(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 2048) return null;
+  try {
+    const url = new URL(trimmed);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function normalizeOutfitImage(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl) throw new Error('Choose a JPG, PNG, or WebP outfit image to upload.');
+  const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl);
+  if (!match) throw new Error('Choose a JPG, PNG, or WebP outfit image.');
+  const input = Buffer.from(match[2], 'base64');
+  if (!input.length || input.length > OUTFIT_IMAGE_LIMIT_BYTES) throw new Error('The outfit image must be 1 MB or smaller.');
+  const imageProcessor = getSharp();
+  const image = imageProcessor(input, { limitInputPixels: 25_000_000 });
+  const metadata = await image.metadata();
+  if (!['jpeg', 'png', 'webp'].includes(metadata.format)) throw new Error('Choose a JPG, PNG, or WebP outfit image.');
+  const output = await imageProcessor(input, { limitInputPixels: 25_000_000 })
+    .rotate()
+    .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 82 })
+    .toBuffer();
+  if (output.length > OUTFIT_IMAGE_LIMIT_BYTES) throw new Error('The optimized outfit image is too large. Choose a smaller image.');
+  return output.toString('base64');
+}
+
+function publicOutfit(outfit) {
+  return {
+    id: outfit.id,
+    title: outfit.title,
+    imageUrl: outfit.hasImage ? `/api/outfits/${encodeURIComponent(outfit.id)}/image?v=${outfit.updatedAt}` : null,
+    updatedAt: outfit.updatedAt,
+  };
+}
+
+function adminOutfit(outfit) {
+  return {
+    id: outfit.id,
+    title: outfit.title,
+    affiliateUrl: outfit.affiliateUrl || '',
+    status: outfit.status === 'unpublished' ? 'unpublished' : 'published',
+    imageUrl: outfit.hasImage ? `/api/outfits/${encodeURIComponent(outfit.id)}/image?v=${outfit.updatedAt}` : null,
+    hasImage: Boolean(outfit.hasImage),
+    createdAt: outfit.createdAt,
+    updatedAt: outfit.updatedAt,
+  };
+}
+
+async function getOutfitById(id) {
+  if (!isPersistentStorageConfigured()) return null;
+  const value = await redisCommand('HGET', OUTFITS_KEY, id);
+  if (typeof value !== 'string') return null;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+async function listOutfits({ publishedOnly = false } = {}) {
+  if (!isPersistentStorageConfigured()) return [];
+  const ids = await redisCommand('ZREVRANGE', OUTFIT_INDEX_KEY, '0', '-1');
+  if (!Array.isArray(ids) || !ids.length) return [];
+  const values = await redisCommand('HMGET', OUTFITS_KEY, ...ids);
+  return (Array.isArray(values) ? values : []).flatMap((value) => {
+    if (typeof value !== 'string') return [];
+    try {
+      const outfit = JSON.parse(value);
+      if (publishedOnly && outfit.status !== 'published') return [];
+      return [outfit];
+    } catch { return []; }
+  });
+}
+
+async function saveOutfit(outfit, imageData) {
+  const metadata = {
+    id: outfit.id,
+    title: outfit.title,
+    affiliateUrl: outfit.affiliateUrl,
+    status: outfit.status === 'unpublished' ? 'unpublished' : 'published',
+    hasImage: Boolean(outfit.hasImage),
+    createdAt: outfit.createdAt,
+    updatedAt: outfit.updatedAt,
+  };
+  const imageKey = `${OUTFIT_IMAGE_KEY_PREFIX}${outfit.id}`;
+  if (imageData !== undefined) {
+    if (imageData) await redisCommand('SET', imageKey, imageData);
+    else await redisCommand('DEL', imageKey);
+  }
+  await redisCommand('HSET', OUTFITS_KEY, outfit.id, JSON.stringify(metadata));
+  await redisCommand('ZADD', OUTFIT_INDEX_KEY, String(outfit.updatedAt), outfit.id);
+  return metadata;
+}
+
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
   const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links', '/api/cron/announcement-link-backfill', '/api/cron/check-status'].includes(req.path);
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
   const isDonationWrite = ['POST', 'PUT', 'DELETE'].includes(req.method) && req.path.startsWith('/api/admin/donation');
-  const limit = isCronPayload ? '1mb' : (isBlogWrite || isDonationWrite) ? '2mb' : '10kb';
+  const isOutfitWrite = ['POST', 'PUT', 'DELETE'].includes(req.method) && req.path.startsWith('/api/admin/outfits');
+  const limit = isCronPayload ? '1mb' : (isBlogWrite || isDonationWrite || isOutfitWrite) ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
 });
 app.get('/sitemap.xml', async (_req, res) => {
@@ -537,6 +660,52 @@ app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
   }
 });
+app.get('/api/outfits', async (_req, res) => {
+  try {
+    const outfits = (await listOutfits({ publishedOnly: true })).map(publicOutfit);
+    return res.json({ outfits });
+  } catch (error) {
+    console.error('Could not load oath-taking outfits:', error.message);
+    return res.status(503).json({ error: 'Oath-taking outfits are temporarily unavailable.' });
+  }
+});
+
+app.get('/api/outfits/:id/image', async (req, res) => {
+  const { id } = req.params;
+  if (!isValidOutfitId(id)) return res.status(404).end();
+  try {
+    const outfit = await getOutfitById(id);
+    if (!outfit?.hasImage) return res.status(404).end();
+    if (outfit.status !== 'published' && !isAuthenticated(req)) return res.status(404).end();
+    const imageData = await redisCommand('GET', `${OUTFIT_IMAGE_KEY_PREFIX}${id}`);
+    if (typeof imageData !== 'string' || !imageData) return res.status(404).end();
+    res.set({
+      'Content-Type': 'image/webp',
+      'Cache-Control': outfit.status === 'published' ? 'public, max-age=300, stale-while-revalidate=3600' : 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.send(Buffer.from(imageData, 'base64'));
+  } catch (error) {
+    console.error('Could not load outfit image:', error.message);
+    return res.status(503).end();
+  }
+});
+
+app.get('/api/outfits/:id/open', async (req, res) => {
+  const { id } = req.params;
+  if (!isValidOutfitId(id)) return res.status(404).type('text/plain').send('Outfit not found.');
+  try {
+    const outfit = await getOutfitById(id);
+    if (!outfit || outfit.status !== 'published') return res.status(404).type('text/plain').send('Outfit not found.');
+    const affiliateUrl = normalizeAffiliateUrl(outfit.affiliateUrl);
+    if (!affiliateUrl) return res.status(404).type('text/plain').send('Outfit link unavailable.');
+    return res.redirect(302, affiliateUrl);
+  } catch (error) {
+    console.error('Could not open outfit link:', error.message);
+    return res.status(503).type('text/plain').send('Outfit link temporarily unavailable.');
+  }
+});
+
 app.get('/api/blog/posts', async (req, res) => {
   const requestedOffset = Number.parseInt(req.query.offset, 10);
   const offset = Number.isInteger(requestedOffset) && requestedOffset > 0 ? Math.min(requestedOffset, 10_000) : 0;
@@ -642,6 +811,103 @@ app.delete('/api/admin/blog/posts/:id', requireAdmin, async (req, res) => {
     return res.status(503).json({ error: 'The post could not be deleted. Check shared storage and try again.' });
   }
 });
+
+app.get('/api/admin/outfits', requireAdmin, async (_req, res) => {
+  if (!isPersistentStorageConfigured()) {
+    return res.json({ outfits: [], persistentStorage: false });
+  }
+  try {
+    const outfits = (await listOutfits()).map(adminOutfit);
+    return res.json({ outfits, persistentStorage: true });
+  } catch (error) {
+    console.error('Could not load outfits for admin:', error.message);
+    return res.status(503).json({ error: 'Outfit listings could not be loaded. Check shared storage and try again.' });
+  }
+});
+
+app.post('/api/admin/outfits', requireAdmin, async (req, res) => {
+  if (!outfitStorageReady(res)) return;
+  const title = sanitizeOutfitTitle(req.body?.title);
+  const affiliateUrl = normalizeAffiliateUrl(req.body?.affiliateUrl);
+  const status = normalizeOutfitStatus(req.body?.status);
+  if (!title || title.length > 180) return res.status(400).json({ error: 'Add an outfit title between 1 and 180 characters.' });
+  if (!affiliateUrl) return res.status(400).json({ error: 'Enter a valid affiliate purchase link starting with http:// or https://.' });
+  let imageData;
+  try {
+    imageData = await normalizeOutfitImage(req.body?.image);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  try {
+    const now = Date.now();
+    const outfit = { id: randomUUID(), title, affiliateUrl, status, hasImage: true, createdAt: now, updatedAt: now };
+    const saved = await saveOutfit(outfit, imageData);
+    return res.status(201).json({ outfit: adminOutfit(saved) });
+  } catch (error) {
+    console.error('Could not create outfit:', error.message);
+    return res.status(503).json({ error: 'The outfit could not be saved. Check shared storage and try again.' });
+  }
+});
+
+app.put('/api/admin/outfits/:id', requireAdmin, async (req, res) => {
+  if (!outfitStorageReady(res)) return;
+  const { id } = req.params;
+  if (!isValidOutfitId(id)) return res.status(404).json({ error: 'Outfit not found.' });
+  try {
+    const existing = await getOutfitById(id);
+    if (!existing) return res.status(404).json({ error: 'Outfit not found.' });
+    const title = sanitizeOutfitTitle(req.body?.title);
+    const affiliateUrl = normalizeAffiliateUrl(req.body?.affiliateUrl);
+    const status = normalizeOutfitStatus(req.body?.status);
+    if (!title || title.length > 180) return res.status(400).json({ error: 'Add an outfit title between 1 and 180 characters.' });
+    if (!affiliateUrl) return res.status(400).json({ error: 'Enter a valid affiliate purchase link starting with http:// or https://.' });
+
+    let imageData;
+    if (Object.hasOwn(req.body || {}, 'image')) {
+      if (req.body.image === null || req.body.image === '') {
+        return res.status(400).json({ error: 'Upload an outfit image to replace the current one.' });
+      }
+      try { imageData = await normalizeOutfitImage(req.body.image); }
+      catch (error) { return res.status(400).json({ error: error.message }); }
+    }
+    if (!existing.hasImage && imageData === undefined) {
+      return res.status(400).json({ error: 'Upload an outfit image before saving.' });
+    }
+
+    const outfit = {
+      id,
+      title,
+      affiliateUrl,
+      status,
+      hasImage: imageData === undefined ? Boolean(existing.hasImage) : true,
+      createdAt: existing.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    const saved = await saveOutfit(outfit, imageData);
+    return res.json({ outfit: adminOutfit(saved) });
+  } catch (error) {
+    console.error('Could not update outfit:', error.message);
+    return res.status(503).json({ error: 'The outfit could not be updated. Check shared storage and try again.' });
+  }
+});
+
+app.delete('/api/admin/outfits/:id', requireAdmin, async (req, res) => {
+  if (!outfitStorageReady(res)) return;
+  const { id } = req.params;
+  if (!isValidOutfitId(id)) return res.status(404).json({ error: 'Outfit not found.' });
+  try {
+    const existing = await getOutfitById(id);
+    if (!existing) return res.status(404).json({ error: 'Outfit not found.' });
+    await redisCommand('HDEL', OUTFITS_KEY, id);
+    await redisCommand('ZREM', OUTFIT_INDEX_KEY, id);
+    await redisCommand('DEL', `${OUTFIT_IMAGE_KEY_PREFIX}${id}`);
+    return res.json({ deleted: true });
+  } catch (error) {
+    console.error('Could not delete outfit:', error.message);
+    return res.status(503).json({ error: 'The outfit could not be deleted. Check shared storage and try again.' });
+  }
+});
+
 async function getLatestAvailableResult() {
   const snapshot = await refresh();
   const latest = snapshot?.results

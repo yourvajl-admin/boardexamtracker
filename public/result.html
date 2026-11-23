@@ -24,12 +24,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <script src="/result.js?v=20261029-7" defer></script>
+  <script src="/result.js?v=20261123-5" defer></script>
   <link rel="preload" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/Phosphor.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/regular/style.css">
   <script src="/theme.js?v=20261026-6"></script>
-  <link rel="stylesheet" href="/site.css?v=20261123-1">
-  <script src="/site.js?v=20261123-1" defer></script>
+  <link rel="stylesheet" href="/site.css?v=20261123-5">
+  <script src="/site.js?v=20261123-5" defer></script>
 </head>
 <body data-page="result">
   <dialog class="maintenance-dialog" aria-labelledby="maintenance-title" aria-describedby="maintenance-message">
@@ -67,7 +67,7 @@
         <span id="result-category" class="banner-cat">Board exam result</span>
         <h1 id="result-title">Loading this board exam result…</h1>
         <p class="banner-meta"><span><i class="ph ph-calendar-blank" aria-hidden="true"></i>Released <b id="result-date">…</b></span><span><i class="ph ph-globe-simple" aria-hidden="true"></i>Source: prc.gov.ph</span></p>
-        <div class="banner-actions"><a class="btn btn-primary" href="/#email-alert-section"><i class="ph ph-bell" aria-hidden="true"></i>Get email alerts</a><button id="back-button" class="btn btn-ghost" type="button"><i class="ph ph-arrow-left" aria-hidden="true"></i>Back to results</button></div>
+        <div class="banner-actions"><a class="btn btn-primary" href="/#email-alert-section"><i class="ph ph-bell" aria-hidden="true"></i>Get email alerts</a><button id="back-button" class="btn btn-ghost" type="button"><i class="ph ph-arrow-left" aria-hidden="true"></i>Back to results</button><button id="open-outfits-button" class="btn btn-ghost outfit-banner-button" type="button"><i class="ph ph-t-shirt" aria-hidden="true"></i>Oath-Taking Outfits</button></div>
       </div>
     </section>
     <div class="wrap detail-layout">
@@ -85,6 +85,21 @@
       </aside>
     </div>
   </main>
+  <dialog id="outfit-overlay" class="outfit-overlay" aria-labelledby="outfit-overlay-title">
+    <div class="outfit-overlay-inner">
+      <div class="outfit-overlay-head">
+        <div class="outfit-overlay-heading">
+          <span class="eyebrow">OATH-TAKING STYLE</span>
+          <h2 id="outfit-overlay-title">Oath-Taking Outfit Collection</h2>
+          <p>Curated outfits for your professional oath-taking ceremony.</p>
+        </div>
+        <button id="close-outfit-overlay" class="dialog-close outfit-overlay-close" type="button" aria-label="Close outfit collection"><i class="ph ph-x" aria-hidden="true"></i></button>
+      </div>
+      <div id="outfit-overlay-body" class="outfit-overlay-body" aria-live="polite">
+        <p class="outfit-state">Loading outfits…</p>
+      </div>
+    </div>
+  </dialog>
   <dialog id="disclaimer-dialog" class="disclaimer-dialog" aria-labelledby="disclaimer-title"><div class="disclaimer-inner"><button id="disclaimer-close" class="dialog-close" type="button" aria-label="Close disclaimer"><i class="ph ph-x" aria-hidden="true"></i></button><span class="kicker">About this website</span><h2 id="disclaimer-title">Disclaimer</h2><p><strong>BoardExamTracker is an independent website.</strong> It is not affiliated with, endorsed by, or operated by the Professional Regulation Commission (PRC).</p><p>Exam result titles, dates, summaries, and linked documents are gathered from publicly available PRC announcements. Our summaries are rephrased for easier scanning and may not include every condition or later update.</p><p><strong>PRC is the official authority for examination results.</strong> Check the PRC announcement and its linked documents for complete details and confirm important information directly with PRC.</p><a class="disclaimer-source" href="https://www.prc.gov.ph/articles/exam-results" target="_blank" rel="noopener noreferrer">Visit the official PRC Exam Results page <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a></div></dialog>
   <footer class="site-foot">
     <div class="wrap foot-main">

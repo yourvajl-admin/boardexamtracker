@@ -165,3 +165,80 @@ document.querySelector('#back-button').addEventListener('click', () => {
 });
 
 loadResult();
+
+const outfitOverlay = document.querySelector('#outfit-overlay');
+const openOutfitsButton = document.querySelector('#open-outfits-button');
+const closeOutfitsButton = document.querySelector('#close-outfit-overlay');
+const outfitOverlayBody = document.querySelector('#outfit-overlay-body');
+let outfitsLoaded = false;
+let outfitsLoading = false;
+
+function renderOutfitState(message, { error = false, retry = false } = {}) {
+  if (!outfitOverlayBody) return;
+  outfitOverlayBody.innerHTML = `<div class="outfit-state${error ? ' is-error' : ''}"><p>${escapeHtml(message)}</p>${retry ? '<button type="button" id="retry-outfits" class="btn btn-outline btn-sm">Try again</button>' : ''}</div>`;
+  outfitOverlayBody.querySelector('#retry-outfits')?.addEventListener('click', () => loadOutfits({ force: true }));
+}
+
+function renderOutfitCards(outfits) {
+  if (!outfitOverlayBody) return;
+  if (!Array.isArray(outfits) || outfits.length === 0) {
+    renderOutfitState('No oath-taking outfits are available right now. Please check back soon.');
+    return;
+  }
+
+  const cards = outfits.map((outfit) => {
+    const title = escapeHtml(outfit.title || 'Oath-taking outfit');
+    const image = outfit.imageUrl
+      ? `<img src="${escapeHtml(outfit.imageUrl)}" alt="${title}" loading="lazy" decoding="async">`
+      : '<span class="outfit-image-fallback">Image unavailable</span>';
+    const href = `/api/outfits/${encodeURIComponent(outfit.id || '')}/open`;
+    return `<article class="outfit-card">
+      <div class="outfit-card-image">${image}</div>
+      <div class="outfit-card-body">
+        <h3 class="outfit-card-title">${title}</h3>
+        <a class="btn btn-primary" href="${href}" target="_blank" rel="noopener noreferrer">View outfit <i class="ph ph-arrow-square-out" aria-hidden="true"></i></a>
+      </div>
+    </article>`;
+  }).join('');
+
+  outfitOverlayBody.innerHTML = `
+    <p class="outfit-overlay-note">Browse curated outfits for your oath-taking ceremony. Select <strong>View outfit</strong> to open the purchase page in a new tab.</p>
+    <div class="outfit-grid">${cards}</div>`;
+}
+
+async function loadOutfits({ force = false } = {}) {
+  if (!outfitOverlayBody || outfitsLoading || (outfitsLoaded && !force)) return;
+  outfitsLoading = true;
+  renderOutfitState('Loading outfits…');
+  try {
+    const response = await fetch('/api/outfits', { headers: { Accept: 'application/json' } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load outfits right now.');
+    renderOutfitCards(data.outfits);
+    outfitsLoaded = true;
+  } catch (error) {
+    outfitsLoaded = false;
+    renderOutfitState(error.message || 'Could not load outfits right now.', { error: true, retry: true });
+  } finally {
+    outfitsLoading = false;
+  }
+}
+
+openOutfitsButton?.addEventListener('click', () => {
+  if (!outfitOverlay) return;
+  if (typeof outfitOverlay.showModal === 'function') outfitOverlay.showModal();
+  else outfitOverlay.setAttribute('open', '');
+  loadOutfits();
+});
+
+closeOutfitsButton?.addEventListener('click', () => {
+  outfitOverlay?.close?.();
+});
+
+outfitOverlay?.addEventListener('click', (event) => {
+  if (event.target === outfitOverlay) outfitOverlay.close();
+});
+
+outfitOverlay?.addEventListener('cancel', () => {
+  // Preserve the current result page state when the overlay is dismissed.
+});
