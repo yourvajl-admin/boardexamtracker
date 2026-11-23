@@ -50,8 +50,8 @@
 :root[data-theme="dark"] .email-alert-controls .email-alert-popup-close{border-color:#396e5b;background:transparent;color:#c8f2df}
 :root[data-theme="dark"] .floating-email-cta{border-color:#4a8bc4;background:#2867a8;box-shadow:0 8px 26px rgba(0,0,0,.42);color:#fff}
 :root[data-theme="dark"] .floating-email-cta:hover{background:#3479b9}
-:root[data-theme="dark"] .floating-donation-cta{border-color:#7a5a2b;background:linear-gradient(135deg,#2a241b,#33281c);box-shadow:0 8px 22px rgba(0,0,0,.35);color:#ffdca8}
-:root[data-theme="dark"] .floating-donation-cta:hover{background:linear-gradient(135deg,#332a1d,#3b2e1e)}
+:root[data-theme="dark"] .floating-donation-cta{border-color:#4a8bc4;background:#2867a8;box-shadow:0 8px 26px rgba(0,0,0,.42);color:#fff}
+:root[data-theme="dark"] .floating-donation-cta:hover{background:#3479b9}
 :root[data-theme="dark"] .donation-dialog{background:#172438;color:#e5edf7}
 :root[data-theme="dark"] .donation-support-title{color:#8fcaff}
 :root[data-theme="dark"] .donation-dialog-inner h2{color:#e8f0fa}
