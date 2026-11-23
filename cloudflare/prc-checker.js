@@ -1,7 +1,7 @@
 const cheerio = require('cheerio');
 const { extractAnnouncementDetails } = require('../src/announcement-details');
 const { categorize } = require('../src/professions');
-const { extractResources } = require('./prc-resources');
+const { RESOURCE_INDEX_VERSION, extractResources } = require('./prc-resources');
 const { fetchPrcPage } = require('./prc-fetch');
 
 const PRC_URL = 'https://www.prc.gov.ph/articles/exam-results';
@@ -118,22 +118,22 @@ async function siteRequest(env, endpoint, { method = 'POST', body, lockToken, ti
   return data;
 }
 
-async function backfillAnnouncementLinks(env, lockToken) {
+async function backfillAnnouncementLinks(env) {
   try {
-    const batch = await siteRequest(env, 'announcement-link-backfill', { body: { lockToken }, lockToken });
+    const batch = await siteRequest(env, 'announcement-link-backfill', { body: {} });
     const announcements = (await Promise.all((batch.urls || []).map(async (url) => {
       try {
         const html = await fetchPrcArticle(url);
-        return { url, resources: extractResources(html, url), details: extractAnnouncementDetails(html) };
+        return { url, resources: extractResources(html, url), linksVersion: RESOURCE_INDEX_VERSION, details: extractAnnouncementDetails(html) };
       } catch (error) {
         console.warn(`Could not backfill PRC files for ${url}: ${error.message}`);
         return null;
       }
     }))).filter(Boolean);
     if (announcements.length) {
-      await siteRequest(env, 'cache-announcement-links', { body: { announcements }, lockToken, timeoutMs: 60000 });
+      await siteRequest(env, 'cache-announcement-links', { body: { announcements, backfill: true }, timeoutMs: 60000 });
     }
-    console.log(JSON.stringify({ event: 'announcement_links_backfilled', scanned: batch.scanned || 0, saved: announcements.length }));
+    console.log(JSON.stringify({ event: 'announcement_links_backfilled', scanned: batch.scanned || 0, saved: announcements.length, skipped: batch.skipped === true }));
   } catch (error) {
     console.error(`Could not backfill older PRC announcement files: ${error.message}`);
   }
@@ -146,7 +146,6 @@ async function publishCheck(env) {
     const lock = await siteRequest(env, 'check-status', { body: { action: 'acquire' } });
     lockToken = lock.lockToken;
     await siteRequest(env, 'check-status', { body: { action: 'started' } });
-    await backfillAnnouncementLinks(env, lockToken);
 
     const firstPage = await fetchPrcPage(0);
     const lastPage = getLastPage(firstPage.html);
@@ -253,7 +252,10 @@ export default {
   async scheduled(controller, env, ctx) {
     const startedAt = Date.now();
     console.log(JSON.stringify({ event: 'scheduled_check_started', cron: controller.cron, scheduledTime: controller.scheduledTime }));
-    ctx.waitUntil(publishCheck(env)
+    const task = controller.cron === '*/2 * * * *'
+      ? backfillAnnouncementLinks(env)
+      : publishCheck(env);
+    ctx.waitUntil(task
       .then(() => console.log(JSON.stringify({ event: 'scheduled_check_finished', durationMs: Date.now() - startedAt })))
       .catch((error) => console.error(JSON.stringify({ event: 'scheduled_check_failed', durationMs: Date.now() - startedAt, error: error.message }))));
   },

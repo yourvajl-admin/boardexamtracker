@@ -67,6 +67,12 @@ function previewUrl(value) {
       const id = url.pathname.match(/\/file\/d\/([^/]+)/)?.[1] || url.searchParams.get('id');
       if (id) return `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview`;
     }
+    if (url.hostname === 'docs.google.com') {
+      const document = url.pathname.match(/^\/(document|spreadsheets|presentation)\/d\/([^/]+)/);
+      if (document) return `https://docs.google.com/${document[1]}/d/${encodeURIComponent(document[2])}/preview`;
+      const file = url.pathname.match(/^\/file\/d\/([^/]+)/);
+      if (file) return `https://drive.google.com/file/d/${encodeURIComponent(file[1])}/preview`;
+    }
     return url.href;
   } catch { return ''; }
 }

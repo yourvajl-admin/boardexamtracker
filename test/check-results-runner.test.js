@@ -27,6 +27,15 @@ test('the bundled archive fallback includes the older Radiologic Technologists r
   assert.equal(entry.details.version, 2);
 });
 
+test('the deployable announcement bundle covers the full saved results archive', () => {
+  const entries = Object.values(fallbackAnnouncementLinks);
+  assert.ok(entries.length >= 420);
+  assert.ok(entries.filter((entry) => entry.resources?.length).length >= 420);
+  assert.ok(entries.filter((entry) => entry.details?.source === 'prc'
+    && entry.details.version === 2
+    && entry.details.summary?.trim()).length >= 420);
+});
+
 test('the scheduled runner triggers a live deploy hook after publishing a new result', async () => {
   const previousHook = process.env.VERCEL_DEPLOY_HOOK_URL;
   process.env.VERCEL_DEPLOY_HOOK_URL = 'https://example.vercel.app/api/deploy';

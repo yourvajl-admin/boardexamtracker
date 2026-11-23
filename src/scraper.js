@@ -3,6 +3,7 @@ const { execFile } = require('node:child_process');
 const dns = require('node:dns');
 const { promisify } = require('node:util');
 const { extractAnnouncementDetails, extractResultDetails } = require('./announcement-details');
+const { RESOURCE_INDEX_VERSION, extractResources } = require('./prc-resources');
 const { PROFESSION_CATEGORIES, categorize } = require('./professions');
 
 // PRC's web server is intermittently unreachable over IPv6 from hosted runners.
@@ -59,30 +60,11 @@ function parseDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function extractAnnouncementLinks(html, articleUrl) {
-  const $ = cheerio.load(html);
-  const resourceLabel = /(full text of (?:the )?official result|official result|performance of (?:the )?schools|successful examinees|list of (?:the )?examinees|list of successful|top\s*10|highest places|result document|examinees list)/i;
-  const resources = [];
-  $('a[href]').each((_, element) => {
-    const anchor = $(element);
-    const label = anchor.text().replace(/\s+/g, ' ').trim();
-    const href = anchor.attr('href');
-    if (!label || !resourceLabel.test(label) || !href) return;
-    try {
-      const url = new URL(href, articleUrl);
-      if (url.protocol !== 'https:' || !['www.prc.gov.ph', 'prc.gov.ph', 'drive.google.com', 'docs.google.com'].includes(url.hostname)) return;
-      resources.push({ label, url: url.href });
-    } catch {
-      // Ignore malformed links published in the announcement.
-    }
-  });
-  return [...new Map(resources.map((resource) => [resource.url, resource])).values()];
-}
-
 async function fetchAnnouncementLinks(articleUrl, options = {}) {
   const html = await fetchPrcHtml(articleUrl, { maxBytes: 4 * 1024 * 1024, ...options });
   return {
-    resources: extractAnnouncementLinks(html, articleUrl),
+    resources: extractResources(html, articleUrl),
+    linksVersion: RESOURCE_INDEX_VERSION,
     details: extractAnnouncementDetails(html),
   };
 }
@@ -204,4 +186,4 @@ async function fetchResults({ maxPage } = {}) {
   return [...unique.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
-module.exports = { SOURCE_URL, PROFESSION_CATEGORIES, extractResults, fetchResults, fetchPrcHtml, normalizeUrl, parseDate, categorize, fetchAnnouncementLinks, extractAnnouncementLinks, extractAnnouncementDetails, getLastPage };
+module.exports = { SOURCE_URL, PROFESSION_CATEGORIES, extractResults, fetchResults, fetchPrcHtml, normalizeUrl, parseDate, categorize, fetchAnnouncementLinks, extractAnnouncementLinks: extractResources, extractAnnouncementDetails, getLastPage };

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { migrateLegacySubscribers } = require('../src/subscriptions');
+const { listSubscribersForAdmin, migrateLegacySubscribers } = require('../src/subscriptions');
 
 const destinationUrl = 'https://new-upstash.mock';
 const sourceUrl = 'https://legacy-upstash.mock';
@@ -86,4 +86,44 @@ test('copies legacy subscribers once without deleting or overwriting destination
   assert.equal(second.alreadyComplete, true);
   assert.equal(second.imported, 1);
   assert.equal(destination.size, 2, 'retry does not create duplicates');
+});
+
+test('admin subscriber records include creation time without exposing private tokens', async (t) => {
+  const originalEnv = {
+    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+    UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+    KV_REST_API_URL: process.env.KV_REST_API_URL,
+    KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN,
+  };
+  const originalFetch = global.fetch;
+  t.after(() => {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  process.env.UPSTASH_REDIS_REST_URL = destinationUrl;
+  process.env.UPSTASH_REDIS_REST_TOKEN = 'test-destination-token';
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  global.fetch = async (input, options = {}) => {
+    assert.equal(String(input), destinationUrl);
+    assert.deepEqual(JSON.parse(options.body), ['HGETALL', subscriberKey]);
+    return new Response(JSON.stringify({
+      result: [
+        'new@example.com',
+        JSON.stringify({ ...makeSubscriber('new@example.com'), createdAt: 1_800_000_000_000 }),
+        'old@example.com',
+        JSON.stringify({ ...makeSubscriber('old@example.com', { confirmedAt: null }), createdAt: 1_700_000_000_000 }),
+      ],
+    }), { status: 200 });
+  };
+
+  const subscribers = await listSubscribersForAdmin();
+  assert.deepEqual(subscribers, [
+    { email: 'new@example.com', status: 'Confirmed', createdAt: 1_800_000_000_000 },
+    { email: 'old@example.com', status: 'Pending confirmation', createdAt: 1_700_000_000_000 },
+  ]);
 });

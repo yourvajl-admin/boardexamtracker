@@ -24,6 +24,8 @@ const metallurgicalAnnouncementFixture = `<article>
   <p>The Professional Regulation Commission (PRC) announces that 36 out of 42 passed the Metallurgical Engineers Computer-Based Licensure Examination administered by the Board of Metallurgical Engineering in N. C. R., Cagayan de Oro, Cebu and Lucena this October 2026.</p>
   <p>Members of the Board of Metallurgical Engineering who administered the licensure examination were Engr. Ralph A. Ante, Chairman; Engr. Juancho Pablo S. Calvez and Engr. Ludwig John H. Pascual, Members.</p>
   <a href="https://drive.google.com/file/d/example/view">Full text of the Official Result</a>
+  <a href="https://drive.google.com/file/d/example-schools/view">Download</a>
+  <a href="https://www.prc.gov.ph/sites/default/files/metallurgical-results.pdf">Result PDF</a>
 </article>`;
 
 function fakeRedisResponse(command) {
@@ -129,6 +131,7 @@ test('verified announcements without separate files remain cached and serve thei
   values.set(cacheKey, JSON.stringify({
     resources: [],
     details: { summary: 'The PRC announcement confirms the result.', facts: [], source: 'prc', version: 2 },
+    linksVersion: 2,
     fetchedAt: Date.now(),
   }));
   const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
@@ -153,6 +156,51 @@ test('bundled older result files are served immediately without fetching PRC', a
   }
 });
 
+test('refreshes older cached file lists and publishes every linked result document', async () => {
+  const articleUrl = 'https://www.prc.gov.ph/article/fixture-result-with-old-file-index';
+  const cacheKey = `boardexamtracker:announcement-links:v1:${Buffer.from(articleUrl).toString('base64url')}`;
+  values.set(cacheKey, JSON.stringify({
+    resources: [{ label: 'Old result file', url: 'https://drive.google.com/file/d/old-result/view' }],
+    details: { summary: 'Previously verified result.', facts: [], source: 'prc', version: 2 },
+    linksVersion: 1,
+    fetchedAt: Date.now(),
+  }));
+
+  const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.data.cached, false);
+  assert.deepEqual(response.data.resources.map(({ url }) => url), [
+    'https://drive.google.com/file/d/example/view',
+    'https://drive.google.com/file/d/example-schools/view',
+    'https://www.prc.gov.ph/sites/default/files/metallurgical-results.pdf',
+  ]);
+  assert.equal(JSON.parse(values.get(cacheKey)).linksVersion, 2);
+});
+
+test('refreshes verified file links when cached PRC details are missing', async () => {
+  const articleUrl = 'https://www.prc.gov.ph/article/fixture-result-with-missing-details';
+  const cacheKey = `boardexamtracker:announcement-links:v1:${Buffer.from(articleUrl).toString('base64url')}`;
+  values.set(cacheKey, JSON.stringify({
+    resources: [{ label: 'Previously verified official result', url: 'https://drive.google.com/file/d/cached-result/view' }],
+    details: null,
+    linksVersion: 2,
+    fetchedAt: Date.now(),
+  }));
+
+  const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.data.cached, false);
+  assert.match(response.data.details.summary, /36 out of 42 passed/);
+  assert.deepEqual(response.data.resources.map(({ url }) => url), [
+    'https://drive.google.com/file/d/example/view',
+    'https://drive.google.com/file/d/example-schools/view',
+    'https://www.prc.gov.ph/sites/default/files/metallurgical-results.pdf',
+  ]);
+  assert.equal(JSON.parse(values.get(cacheKey)).details.source, 'prc');
+});
+
 test('announcement backfill rotates through the complete saved results archive', async () => {
   const unauthorized = await request('/api/cron/announcement-link-backfill', {
     method: 'POST',
@@ -161,22 +209,44 @@ test('announcement backfill rotates through the complete saved results archive',
   });
   assert.equal(unauthorized.status, 401);
 
-  values.set('boardexamtracker:results-check-lock', 'backfill-test-lock');
+  values.delete('boardexamtracker:results-check-lock');
   const invoke = () => request('/api/cron/announcement-link-backfill', {
     method: 'POST',
     headers: { authorization: 'Bearer test-cron-secret' },
-    body: { lockToken: 'backfill-test-lock' },
+    body: {},
   });
   const first = await invoke();
   assert.equal(first.status, 200);
-  assert.equal(first.data.urls.length, 12);
+  assert.ok(first.data.urls.length <= 6);
+  assert.ok(first.data.scanned > 0);
   assert.ok(first.data.urls.every((url) => /^https:\/\/www\.prc\.gov\.ph\/(?:article|node)\//.test(url)));
 
   const second = await invoke();
   assert.equal(second.status, 200);
-  assert.equal(second.data.urls.length, 12);
+  assert.ok(second.data.urls.length <= 6);
+  assert.ok(second.data.scanned > 0);
   assert.equal(second.data.urls.some((url) => first.data.urls.includes(url)), false);
-  values.delete('boardexamtracker:results-check-lock');
+});
+
+test('authenticated archive backfills can cache details without the result-check lock', async () => {
+  const articleUrl = 'https://www.prc.gov.ph/article/archive-result-backfill';
+  const response = await request('/api/cron/cache-announcement-links', {
+    method: 'POST',
+    headers: { authorization: 'Bearer test-cron-secret' },
+    body: {
+      backfill: true,
+      announcements: [{
+        url: articleUrl,
+        resources: [{ label: 'Official Result', url: 'https://drive.google.com/file/d/archive-result/view' }],
+        linksVersion: 2,
+        details: { summary: 'Official backfilled result details.', facts: ['A source-verified fact.'], source: 'prc', version: 2 },
+      }],
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.data.saved, 1);
+  const cacheKey = `boardexamtracker:announcement-links:v1:${Buffer.from(articleUrl).toString('base64url')}`;
+  assert.equal(JSON.parse(values.get(cacheKey)).details.summary, 'Official backfilled result details.');
 });
 
 test('verified Metallurgical Engineers fallback details remain visible during a PRC outage', async () => {
@@ -202,13 +272,39 @@ test('verified Metallurgical Engineers fallback details remain visible during a 
   }
 });
 
-test('serves bundled files without outdated details when the PRC source cannot be verified', async () => {
+test('verified Electrical Engineers fallback details remain visible with cached files during a PRC outage', async () => {
+  failPrcFetch = true;
+  try {
+    const articleUrl = 'https://www.prc.gov.ph/article/september-2026-registered-electrical-engineers-and-registered-master-electricians-licensure';
+    const cacheKey = `boardexamtracker:announcement-links:v1:${Buffer.from(articleUrl).toString('base64url')}`;
+    values.set(cacheKey, JSON.stringify({
+      resources: [{ label: 'Cached official result', url: 'https://drive.google.com/file/d/example/view' }],
+      details: null,
+      linksVersion: 2,
+      fetchedAt: Date.now(),
+    }));
+    const response = await request(`/api/announcement-links?version=3&url=${encodeURIComponent(articleUrl)}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.data.cached, true);
+    assert.equal(response.data.details.source, 'prc');
+    assert.equal(response.data.details.version, 2);
+    assert.match(response.data.details.summary, /1,676 out of 3,399 passed/);
+    assert.match(response.data.details.facts[0], /Board of Electrical Engineering/);
+    assert.equal(response.data.resources[0].label, 'Cached official result');
+  } finally {
+    failPrcFetch = false;
+  }
+});
+
+test('serves bundled files and verified details when the PRC source cannot be reached', async () => {
   failPrcFetch = true;
   try {
     const response = await request('/api/announcement-links?version=2&url=https%3A%2F%2Fwww.prc.gov.ph%2Farticle%2Foctober-2026-mining-engineers-computer-based-licensure-examination-results-released-one-1');
     assert.equal(response.status, 200);
     assert.equal(response.data.cached, true);
-    assert.equal(response.data.details, null);
+    assert.equal(response.data.details.source, 'prc');
+    assert.equal(response.data.details.version, 2);
+    assert.match(response.data.details.summary, /242 out of 279 passed/);
     assert.ok(response.data.resources.length > 0);
   } finally {
     failPrcFetch = false;

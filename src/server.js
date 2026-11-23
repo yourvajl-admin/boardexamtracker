@@ -7,6 +7,7 @@ const { randomUUID } = require('node:crypto');
 const { fetchResults, fetchAnnouncementLinks, normalizeUrl, SOURCE_URL, PROFESSION_CATEGORIES } = require('./scraper');
 const bundledResultSnapshot = require('./fallback-results.json');
 const bundledAnnouncementLinks = require('./fallback-announcement-links.json');
+const { RESOURCE_INDEX_VERSION } = require('./prc-resources');
 const { getCache, setCache, isFresh } = require('./cache');
 const { isEmailConfigured, sendEmail } = require('./email');
 const { adminConfig, authenticate, clearSessionCookie, createSession, isAuthenticated, setSessionCookie } = require('./admin-auth');
@@ -39,7 +40,8 @@ const RESULTS_CHECK_LOCK_KEY = 'boardexamtracker:results-check-lock';
 const RESULTS_CHECK_STATUS_KEY = 'boardexamtracker:results-check-status:v1';
 const RESULTS_SCAN_CURSOR_KEY = 'boardexamtracker:results-scan-cursor:v1';
 const ANNOUNCEMENT_BACKFILL_CURSOR_KEY = 'boardexamtracker:announcement-links:backfill-cursor:v1';
-const ANNOUNCEMENT_BACKFILL_BATCH_SIZE = 12;
+const ANNOUNCEMENT_BACKFILL_LOCK_KEY = 'boardexamtracker:announcement-links:backfill-lock:v1';
+const ANNOUNCEMENT_BACKFILL_BATCH_SIZE = 6;
 const ANNOUNCEMENT_BACKFILL_SCAN_SIZE = 60;
 const ADSENSE_ENABLED_KEY = 'boardexamtracker:ads-enabled';
 const BLOG_POSTS_KEY = 'boardexamtracker:blog:posts';
@@ -69,11 +71,13 @@ function hasVerifiedAnnouncementDetails(details) {
   return details?.source === 'prc'
     && details.version === 2
     && typeof details.summary === 'string'
+    && details.summary.trim().length > 0
     && Array.isArray(details.facts);
 }
 
 function hasCompleteAnnouncementLinks(value) {
   return hasVerifiedAnnouncementDetails(value?.details)
+    && value.linksVersion === RESOURCE_INDEX_VERSION
     && (value.linksVerified === true || value.resources?.length > 0);
 }
 
@@ -100,7 +104,7 @@ function findBundledAnnouncement(articleUrl) {
     const candidatePath = new URL(candidate).pathname.replace(/\/+$/, '');
     const candidateCore = candidatePath.replace(/-(?:one|two|three|four|five|six|seven|eight|nine|ten)-\d+$/i, '').replace(/-(?:one|two|three|four|five|six|seven|eight|nine|ten)$/i, '').replace(/-\d+$/i, '');
     if (candidate === targetUrl || candidatePath === targetPath || candidateCore === slugCore) {
-      return { ...value, fetchedAt: 0, bundled: true };
+      return { ...value, fetchedAt: 0, bundled: true, linksVersion: RESOURCE_INDEX_VERSION };
     }
   }
   return null;
@@ -236,12 +240,57 @@ function blogStorageReady(res) {
   return false;
 }
 
+const DONATION_QR_KEY = 'boardexamtracker:donation:qr';
+const DONATION_QR_META_KEY = 'boardexamtracker:donation:qr:meta';
+const DONATION_QR_LIMIT_BYTES = 1_000_000;
+
+function donationStorageReady(res) {
+  if (isPersistentStorageConfigured()) return true;
+  res.status(503).json({ error: 'Configure Upstash Redis REST credentials to manage donation settings.' });
+  return false;
+}
+
+async function getDonationQrMeta() {
+  if (!isPersistentStorageConfigured()) return { hasQr: false, updatedAt: null };
+  try {
+    const raw = await redisCommand('GET', DONATION_QR_META_KEY);
+    if (typeof raw !== 'string' || !raw) return { hasQr: false, updatedAt: null };
+    const meta = JSON.parse(raw);
+    const updatedAt = Number.isFinite(meta?.updatedAt) ? meta.updatedAt : null;
+    return { hasQr: Boolean(updatedAt), updatedAt };
+  } catch (error) {
+    console.warn('Could not read donation QR metadata:', error.message);
+    return { hasQr: false, updatedAt: null };
+  }
+}
+
+async function normalizeDonationQr(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl) throw new Error('Choose a JPG, PNG, or WebP QR code image to upload.');
+  const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(dataUrl);
+  if (!match) throw new Error('Choose a JPG, PNG, or WebP QR code image.');
+  const input = Buffer.from(match[2], 'base64');
+  if (!input.length || input.length > DONATION_QR_LIMIT_BYTES) throw new Error('The QR code image must be 1 MB or smaller.');
+  const imageProcessor = getSharp();
+  const image = imageProcessor(input, { limitInputPixels: 25_000_000 });
+  const metadata = await image.metadata();
+  if (!['jpeg', 'png', 'webp'].includes(metadata.format)) throw new Error('Choose a JPG, PNG, or WebP QR code image.');
+  const output = await imageProcessor(input, { limitInputPixels: 25_000_000 })
+    .rotate()
+    .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 92 })
+    .toBuffer();
+  if (output.length > DONATION_QR_LIMIT_BYTES) throw new Error('The optimized QR code image is too large. Choose a smaller image.');
+  return output.toString('base64');
+}
+
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use((req, res, next) => {
   const isCronPayload = req.method === 'POST' && ['/api/cron/check-results', '/api/cron/cache-announcement-links', '/api/cron/announcement-link-backfill', '/api/cron/check-status'].includes(req.path);
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
-  const limit = isCronPayload ? '1mb' : isBlogWrite ? '2mb' : '10kb';
+  const isDonationWrite = ['POST', 'PUT', 'DELETE'].includes(req.method) && req.path.startsWith('/api/admin/donation');
+  const limit = isCronPayload ? '1mb' : (isBlogWrite || isDonationWrite) ? '2mb' : '10kb';
   return express.json({ limit })(req, res, next);
 });
 app.get('/sitemap.xml', async (_req, res) => {
@@ -330,6 +379,35 @@ async function getAdSenseConfig() {
   };
 }
 
+app.get('/api/donation/settings', async (_req, res) => {
+  const meta = await getDonationQrMeta();
+  res.set('Cache-Control', 'no-store');
+  return res.json({
+    hasQr: meta.hasQr,
+    qrImageUrl: meta.hasQr ? `/api/donation/qr?v=${meta.updatedAt || Date.now()}` : null,
+    updatedAt: meta.updatedAt,
+  });
+});
+
+app.get('/api/donation/qr', async (_req, res) => {
+  if (!isPersistentStorageConfigured()) return res.status(404).end();
+  try {
+    const meta = await getDonationQrMeta();
+    if (!meta.hasQr) return res.status(404).end();
+    const imageData = await redisCommand('GET', DONATION_QR_KEY);
+    if (typeof imageData !== 'string' || !imageData) return res.status(404).end();
+    res.set({
+      'Content-Type': 'image/webp',
+      'Cache-Control': 'public, max-age=300, stale-while-revalidate=3600',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.send(Buffer.from(imageData, 'base64'));
+  } catch (error) {
+    console.error('Could not load donation QR code:', error.message);
+    return res.status(503).end();
+  }
+});
+
 app.get('/api/adsense-config', async (_req, res) => res.json(await getAdSenseConfig()));
 
 const adminLoginAttempts = new Map();
@@ -359,6 +437,55 @@ app.get('/api/admin/session', (_req, res) => {
   const config = adminConfig();
   res.json({ configured: config.configured, authenticated: config.configured && isAuthenticated(_req) });
 });
+app.get('/api/admin/donation', requireAdmin, async (_req, res) => {
+  if (!isPersistentStorageConfigured()) {
+    return res.json({ hasQr: false, updatedAt: null, qrImageUrl: null, persistentStorage: false });
+  }
+  try {
+    const meta = await getDonationQrMeta();
+    return res.json({
+      hasQr: meta.hasQr,
+      updatedAt: meta.updatedAt,
+      qrImageUrl: meta.hasQr ? `/api/donation/qr?v=${meta.updatedAt || Date.now()}` : null,
+      persistentStorage: true,
+    });
+  } catch (error) {
+    console.error('Could not load donation settings:', error.message);
+    return res.status(503).json({ error: 'Could not load donation settings. Check shared storage and try again.' });
+  }
+});
+
+app.post('/api/admin/donation/qr', requireAdmin, async (req, res) => {
+  if (!donationStorageReady(res)) return;
+  let imageData;
+  try {
+    imageData = await normalizeDonationQr(req.body?.image);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  const updatedAt = Date.now();
+  try {
+    await redisCommand('SET', DONATION_QR_KEY, imageData);
+    await redisCommand('SET', DONATION_QR_META_KEY, JSON.stringify({ updatedAt }));
+    return res.json({ hasQr: true, updatedAt, qrImageUrl: `/api/donation/qr?v=${updatedAt}` });
+  } catch (error) {
+    console.error('Could not save donation QR code:', error.message);
+    return res.status(503).json({ error: 'The QR code could not be saved. Check shared storage and try again.' });
+  }
+});
+
+app.delete('/api/admin/donation/qr', requireAdmin, async (req, res) => {
+  if (!donationStorageReady(res)) return;
+  try {
+    await redisCommand('DEL', DONATION_QR_KEY);
+    await redisCommand('DEL', DONATION_QR_META_KEY);
+    return res.json({ hasQr: false, updatedAt: null, qrImageUrl: null });
+  } catch (error) {
+    console.error('Could not remove donation QR code:', error.message);
+    return res.status(503).json({ error: 'The QR code could not be removed. Check shared storage and try again.' });
+  }
+});
+
 app.get('/api/admin/ads', requireAdmin, async (_req, res) => {
   const config = await getAdSenseConfig();
   return res.json({
@@ -1281,24 +1408,26 @@ app.get('/api/announcement-links', async (req, res) => {
     .json(body);
   const cached = await getCachedAnnouncement(articleUrl);
   const hasCachedDetails = hasVerifiedAnnouncementDetails(cached?.details);
-  if (cached?.resources?.length) {
+  const cachedLinksAreCurrent = cached?.linksVersion === RESOURCE_INDEX_VERSION;
+  if (cachedLinksAreCurrent && cached?.resources?.length && hasCachedDetails) {
     return sendCachedJson({
       url: articleUrl,
       resources: cached.resources,
-      details: hasCachedDetails ? cached.details : null,
+      details: cached.details,
       cached: true,
     });
   }
-  if (hasCachedDetails) {
+  if (cachedLinksAreCurrent && hasCachedDetails) {
     return sendCachedJson({ url: articleUrl, resources: cached.resources, details: cached.details, cached: true });
   }
   try {
     const announcement = await fetchAnnouncementLinks(articleUrl, { timeoutMs: 4000, retryDelays: [], curlFallback: false });
     if (cached && !announcement.resources.length) announcement.resources = cached.resources;
+    if (hasCachedDetails && !hasVerifiedAnnouncementDetails(announcement.details)) announcement.details = cached.details;
     await saveAnnouncementCache(articleUrl, announcement);
     return sendCachedJson({ url: articleUrl, ...announcement, cached: false });
   } catch (error) {
-    if (cached?.resources?.length) {
+    if (cached?.resources?.length || hasCachedDetails) {
       const details = hasCachedDetails ? cached.details : null;
       const body = { url: articleUrl, resources: cached.resources, details, cached: true, refreshError: true };
       return hasCachedDetails ? sendCachedJson(body) : sendUncachedJson(body);
@@ -1310,10 +1439,11 @@ app.get('/api/announcement-links', async (req, res) => {
 app.post('/api/cron/announcement-link-backfill', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
-  const lockToken = typeof req.body?.lockToken === 'string' ? req.body.lockToken : '';
+  const lockToken = randomUUID();
   try {
-    if (!lockToken || await redisCommand('GET', RESULTS_CHECK_LOCK_KEY) !== lockToken) {
-      return res.status(409).json({ error: 'The scheduled-check lock is missing or expired.' });
+    const acquired = await redisCommand('SET', ANNOUNCEMENT_BACKFILL_LOCK_KEY, lockToken, 'NX', 'EX', 60);
+    if (acquired !== 'OK') {
+      return res.json({ urls: [], scanned: 0, skipped: true });
     }
     await restorePersistentResultCache();
     restoreBundledResultCache();
@@ -1346,12 +1476,23 @@ app.post('/api/cron/announcement-link-backfill', async (req, res) => {
   } catch (error) {
     console.error('Could not select PRC announcement links for backfill:', error.message);
     return res.status(503).json({ error: 'Could not load the saved results archive for announcement backfill.' });
+  } finally {
+    if (await redisCommand('GET', ANNOUNCEMENT_BACKFILL_LOCK_KEY).catch(() => null) === lockToken) {
+      await redisCommand('DEL', ANNOUNCEMENT_BACKFILL_LOCK_KEY).catch((error) => {
+        console.warn('Could not release PRC announcement backfill lock:', error.message);
+      });
+    }
   }
 });
 
 app.post('/api/cron/cache-announcement-links', async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.get('authorization') !== `Bearer ${cronSecret}`) return res.status(401).json({ error: 'Unauthorized.' });
+  const backfillBatch = req.body?.backfill === true;
+  const lockToken = typeof req.body?.lockToken === 'string' ? req.body.lockToken : '';
+  if (!backfillBatch && (!lockToken || await redisCommand('GET', RESULTS_CHECK_LOCK_KEY) !== lockToken)) {
+    return res.status(409).json({ error: 'The scheduled-check lock is missing or expired.' });
+  }
   const announcements = Array.isArray(req.body?.announcements) ? req.body.announcements.slice(0, 20) : [];
   let saved = 0;
   for (const entry of announcements) {
@@ -1372,6 +1513,7 @@ app.post('/api/cron/cache-announcement-links', async (req, res) => {
     if (!resources.length && existing?.resources?.length) resources.push(...existing.resources);
     const persisted = await saveAnnouncementCache(articleUrl, {
       resources,
+      linksVersion: entry.linksVersion === RESOURCE_INDEX_VERSION ? RESOURCE_INDEX_VERSION : 1,
       details: entry.details && typeof entry.details === 'object' ? {
         summary: typeof entry.details.summary === 'string' ? entry.details.summary.slice(0, 2000) : '',
         facts: Array.isArray(entry.details.facts) ? entry.details.facts.filter((fact) => typeof fact === 'string').slice(0, 12).map((fact) => fact.slice(0, 2000)) : [],

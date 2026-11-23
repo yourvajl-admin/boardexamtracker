@@ -228,7 +228,14 @@ async function listConfirmedSubscribers() {
 async function listSubscribersForAdmin() {
   return (await allSubscribers())
     .filter((item) => item.unsubscribeToken)
-    .map((item) => ({ email: item.email, status: item.confirmedAt ? 'Confirmed' : 'Pending confirmation' }))
+    .map((item) => {
+      const createdAt = item.createdAt ?? item.confirmedAt;
+      return {
+        email: item.email,
+        status: item.confirmedAt ? 'Confirmed' : 'Pending confirmation',
+        createdAt: createdAt != null && Number.isFinite(Number(createdAt)) ? Number(createdAt) : null,
+      };
+    })
     .sort((a, b) => a.email.localeCompare(b.email));
 }
 
