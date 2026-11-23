@@ -99,13 +99,11 @@
     markDonationSeen();
   });
 
-  if (canAutoShowDonation()) {
-    window.setTimeout(() => {
-      if (canAutoShowDonation() && !donationDialog.open) {
-        openDonationPopup({ automatic: true });
-      }
-    }, 4000);
-  }
+  window.setTimeout(() => {
+    if (!donationDialog.open) {
+      openDonationPopup({ automatic: true });
+    }
+  }, 4000);
 
   // Desktop header: the Professions dropdown. Phones and tablets use the bottom tab bar instead.
   document.querySelectorAll('.nav-drop').forEach((drop) => {
