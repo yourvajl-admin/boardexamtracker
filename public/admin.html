@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#101b2c">
   <title>Admin | BoardExamTracker</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/admin.css?v=20261123-3">
-  <script src="/admin.js?v=20261123-3" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=20261123-4">
+  <script src="/admin.js?v=20261123-4" defer></script>
 </head>
 <body>
   <main class="admin-shell">
@@ -37,7 +37,7 @@
           <div>
             <p class="eyebrow">PRIVATE ADMIN AREA</p>
             <h1>Admin Dashboard</h1>
-            <p>Select a card tile below to open and manage each function. Add future functions as new tiles in this grid.</p>
+            <p>Select a tile to open its card. Only one card can be open at a time, and you can close it when you are done.</p>
           </div>
           <div class="dashboard-actions"><button id="theme-toggle" class="secondary-button" type="button" aria-pressed="false">Switch to dark mode</button><button id="logout-button" class="secondary-button" type="button">Sign out</button></div>
         </div>
@@ -46,100 +46,142 @@
       <p id="dashboard-status" class="notice" role="status" aria-live="polite" hidden></p>
 
       <div class="admin-tile-grid">
-        <details class="admin-card admin-tile viewer-card">
-          <summary class="admin-tile-summary">
+        <div class="admin-card admin-tile viewer-card">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-viewers" data-tile-target="tile-viewers">
             <span class="tile-title-wrap"><span class="eyebrow">LIVE</span><span id="viewers-heading" class="tile-title">Viewers online</span></span>
-          </summary>
-          <div class="admin-tile-content" aria-live="polite">
-            <div class="viewer-panel">
-              <div><span class="live-dot"></span><strong>Viewers online now</strong></div>
-              <strong id="viewer-count" class="viewer-number">—</strong>
-              <small id="viewer-status">Checking live viewer count…</small>
-            </div>
+          </button>
+          <div id="tile-viewers" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="viewers-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">LIVE</span><h2 class="admin-tile-panel-title">Viewers online</h2></div>
+              <div class="admin-tile-content" aria-live="polite">
+                <div class="viewer-panel">
+                  <div><span class="live-dot"></span><strong>Viewers online now</strong></div>
+                  <strong id="viewer-count" class="viewer-number">—</strong>
+                  <small id="viewer-status">Checking live viewer count…</small>
+                </div>
+              </div>
+            </section>
           </div>
-        </details>
+        </div>
 
-        <details class="admin-card admin-tile ads-control-panel">
-          <summary class="admin-tile-summary">
+        <div class="admin-card admin-tile ads-control-panel">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-ads" data-tile-target="tile-ads">
             <span class="tile-title-wrap"><span class="eyebrow">SITE DISPLAY</span><span id="ads-control-heading" class="tile-title">Ad display</span></span>
-          </summary>
-          <div class="admin-tile-content">
-            <div class="ads-card-body">
-              <div>
-                <p id="ads-control-status" role="status" aria-live="polite">Checking ad settings…</p>
-                <p>A newly detected exam result turns ads off automatically. Turn them on again here when ready.</p>
+          </button>
+          <div id="tile-ads" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="ads-control-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">SITE DISPLAY</span><h2 class="admin-tile-panel-title">Ad display</h2></div>
+              <div class="admin-tile-content">
+                <div class="ads-card-body">
+                  <div>
+                    <p id="ads-control-status" role="status" aria-live="polite">Checking ad settings…</p>
+                    <p>A newly detected exam result turns ads off automatically. Turn them on again here when ready.</p>
+                  </div>
+                  <button id="ads-toggle-button" class="ads-toggle-button" type="button" aria-pressed="false" disabled>Loading…</button>
+                </div>
               </div>
-              <button id="ads-toggle-button" class="ads-toggle-button" type="button" aria-pressed="false" disabled>Loading…</button>
-            </div>
+            </section>
           </div>
-        </details>
+        </div>
 
-        <details class="admin-card admin-tile donation-settings-panel">
-          <summary class="admin-tile-summary">
+        <div class="admin-card admin-tile donation-settings-panel">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-donation" data-tile-target="tile-donation">
             <span class="tile-title-wrap"><span class="eyebrow">SUPPORT</span><span id="donation-settings-heading" class="tile-title">Donation Settings</span></span>
-          </summary>
-          <div class="admin-tile-content">
-            <div class="donation-settings-heading">
-              <div>
-                <p>Manage the QR code shown in the public donation pop-up. Uploading or removing a QR code updates the website automatically.</p>
-              </div>
-              <p id="donation-current-status" class="donation-current-status" role="status" aria-live="polite">Checking donation settings…</p>
-            </div>
-            <div class="donation-settings-grid">
-              <div class="donation-preview-card">
-                <h3>Current QR code</h3>
-                <div id="donation-current-preview" class="donation-qr-preview" aria-live="polite"><p class="donation-preview-empty">No QR code uploaded.</p></div>
-              </div>
-              <form id="donation-form" class="donation-form">
-                <label for="donation-qr-input">Upload or replace QR code image</label>
-                <input id="donation-qr-input" name="qr" type="file" accept="image/jpeg,image/png,image/webp">
-                <small class="donation-help">JPG, PNG, or WebP. Maximum 1 MB. Preview the selected image below before saving.</small>
-                <div class="donation-preview-card donation-selected-card">
-                  <h3>Preview before saving</h3>
-                  <div id="donation-selected-preview" class="donation-qr-preview"><p class="donation-preview-empty">No new image selected.</p></div>
+          </button>
+          <div id="tile-donation" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="donation-settings-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">SUPPORT</span><h2 class="admin-tile-panel-title">Donation Settings</h2></div>
+              <div class="admin-tile-content">
+                <div class="donation-settings-heading">
+                  <div>
+                    <p>Manage the QR code shown in the public donation pop-up. Uploading or removing a QR code updates the website automatically.</p>
+                  </div>
+                  <p id="donation-current-status" class="donation-current-status" role="status" aria-live="polite">Checking donation settings…</p>
                 </div>
-                <div class="donation-actions">
-                  <button id="donation-save-button" type="submit">Save QR code</button>
-                  <button id="donation-remove-button" class="unsubscribe-button" type="button" disabled>Remove QR code</button>
+                <div class="donation-settings-grid">
+                  <div class="donation-preview-card">
+                    <h3>Current QR code</h3>
+                    <div id="donation-current-preview" class="donation-qr-preview" aria-live="polite"><p class="donation-preview-empty">No QR code uploaded.</p></div>
+                  </div>
+                  <form id="donation-form" class="donation-form">
+                    <label for="donation-qr-input">Upload or replace QR code image</label>
+                    <input id="donation-qr-input" name="qr" type="file" accept="image/jpeg,image/png,image/webp">
+                    <small class="donation-help">JPG, PNG, or WebP. Maximum 1 MB. Preview the selected image below before saving.</small>
+                    <div class="donation-preview-card donation-selected-card">
+                      <h3>Preview before saving</h3>
+                      <div id="donation-selected-preview" class="donation-qr-preview"><p class="donation-preview-empty">No new image selected.</p></div>
+                    </div>
+                    <div class="donation-actions">
+                      <button id="donation-save-button" type="submit">Save QR code</button>
+                      <button id="donation-remove-button" class="unsubscribe-button" type="button" disabled>Remove QR code</button>
+                    </div>
+                    <p id="donation-status" class="status" role="status" aria-live="polite"></p>
+                  </form>
                 </div>
-                <p id="donation-status" class="status" role="status" aria-live="polite"></p>
-              </form>
-            </div>
+              </div>
+            </section>
           </div>
-        </details>
+        </div>
 
-        <details class="admin-card admin-tile blog-admin-panel">
-          <summary class="admin-tile-summary">
+        <div class="admin-card admin-tile blog-admin-panel">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-blog" data-tile-target="tile-blog">
             <span class="tile-title-wrap"><span class="eyebrow">PUBLISHING</span><span id="blog-admin-heading" class="tile-title">Blog posts</span></span>
-          </summary>
-          <div class="admin-tile-content">
-            <div class="blog-admin-heading"><div><p>Create and manage posts shown on the public blog page.</p></div><button id="create-blog-post" type="button">Create Post</button></div>
-            <p id="blog-admin-status" class="status" role="status" aria-live="polite"></p>
-            <div id="admin-blog-posts" class="admin-blog-posts" aria-live="polite"></div>
+          </button>
+          <div id="tile-blog" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="blog-admin-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">PUBLISHING</span><h2 class="admin-tile-panel-title">Blog posts</h2></div>
+              <div class="admin-tile-content">
+                <div class="blog-admin-heading"><div><p>Create and manage posts shown on the public blog page.</p></div><button id="create-blog-post" type="button">Create Post</button></div>
+                <p id="blog-admin-status" class="status" role="status" aria-live="polite"></p>
+                <div id="admin-blog-posts" class="admin-blog-posts" aria-live="polite"></div>
+              </div>
+            </section>
           </div>
-        </details>
+        </div>
 
-        <details class="admin-card admin-tile test-alert-panel">
-          <summary class="admin-tile-summary">
+        <div class="admin-card admin-tile test-alert-panel">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-alerts" data-tile-target="tile-alerts">
             <span class="tile-title-wrap"><span class="eyebrow">ALERTS</span><span id="latest-alert-heading" class="tile-title">Send latest result</span></span>
-          </summary>
-          <div class="admin-tile-content">
-            <p>Send the newest result alert to the email address entered below, using the same message subscribers receive. This only emails that address; it does not notify other subscribers.</p>
-            <form id="latest-alert-form"><label for="latest-alert-email">Email address</label><input id="latest-alert-email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"><button type="submit">Send latest result</button><p id="latest-alert-status" class="status" role="status" aria-live="polite"></p></form>
+          </button>
+          <div id="tile-alerts" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="latest-alert-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">ALERTS</span><h2 class="admin-tile-panel-title">Send latest result</h2></div>
+              <div class="admin-tile-content">
+                <p>Send the newest result alert to the email address entered below, using the same message subscribers receive. This only emails that address; it does not notify other subscribers.</p>
+                <form id="latest-alert-form"><label for="latest-alert-email">Email address</label><input id="latest-alert-email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"><button type="submit">Send latest result</button><p id="latest-alert-status" class="status" role="status" aria-live="polite"></p></form>
+              </div>
+            </section>
           </div>
-        </details>
+        </div>
 
-        <details class="admin-card admin-tile subscribers-card">
-          <summary class="admin-tile-summary">
+        <div class="admin-card admin-tile subscribers-card">
+          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-subscribers" data-tile-target="tile-subscribers">
             <span class="tile-title-wrap"><span class="eyebrow">EMAIL ALERTS</span><span id="subscribers-heading" class="tile-title">Subscribers list</span></span>
-          </summary>
-          <div class="admin-tile-content">
-            <p>Search the alert list, resend the latest result to a confirmed subscriber, or manually unsubscribe someone who asks.</p>
-            <div class="subscriber-toolbar"><div class="subscriber-search-control"><label for="subscriber-search">Search subscriber emails</label><input id="subscriber-search" type="search" placeholder="Search by email address…" autocomplete="off"></div><div class="subscriber-list-controls"><label for="subscriber-sort">Sort by</label><select id="subscriber-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></div><span id="subscriber-count" class="subscriber-count" aria-live="polite"></span></div>
-            <div class="table-scroll"><table><thead><tr><th scope="col">Email address</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Subscriber actions</span></th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscriber emails match this search.</p></div>
-            <nav id="subscriber-pagination" class="subscriber-pagination" aria-label="Subscriber list pages" hidden></nav>
+          </button>
+          <div id="tile-subscribers" class="admin-tile-modal" hidden>
+            <div class="admin-tile-backdrop" data-tile-close></div>
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="subscribers-heading">
+              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
+              <div class="admin-tile-panel-head"><span class="eyebrow">EMAIL ALERTS</span><h2 class="admin-tile-panel-title">Subscribers list</h2></div>
+              <div class="admin-tile-content">
+                <p>Search the alert list, resend the latest result to a confirmed subscriber, or manually unsubscribe someone who asks.</p>
+                <div class="subscriber-toolbar"><div class="subscriber-search-control"><label for="subscriber-search">Search subscriber emails</label><input id="subscriber-search" type="search" placeholder="Search by email address…" autocomplete="off"></div><div class="subscriber-list-controls"><label for="subscriber-sort">Sort by</label><select id="subscriber-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></div><span id="subscriber-count" class="subscriber-count" aria-live="polite"></span></div>
+                <div class="table-scroll"><table><thead><tr><th scope="col">Email address</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Subscriber actions</span></th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscriber emails match this search.</p></div>
+                <nav id="subscriber-pagination" class="subscriber-pagination" aria-label="Subscriber list pages" hidden></nav>
+              </div>
+            </section>
           </div>
-        </details>
+        </div>
       </div>
 
       <a class="back-link" href="/">Return to the public website</a>

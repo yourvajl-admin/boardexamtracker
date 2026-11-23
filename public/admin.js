@@ -707,4 +707,57 @@ themeToggle.addEventListener('click', () => {
 });
 
 setTheme(window.localStorage.getItem('boardexamtracker-admin-theme') === 'dark' ? 'dark' : 'light');
+
+const tileTriggers = document.querySelectorAll('.admin-tile-trigger');
+const tileModals = document.querySelectorAll('.admin-tile-modal');
+
+function syncAdminTileBodyState() {
+  document.body.classList.toggle('admin-tile-open', [...tileModals].some((modal) => !modal.hidden));
+}
+
+function closeAdminTiles({ returnFocusTo = null } = {}) {
+  for (const modal of tileModals) {
+    if (modal.hidden) continue;
+    modal.hidden = true;
+    const trigger = document.querySelector(`[data-tile-target="${modal.id}"]`);
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    if (!returnFocusTo && document.activeElement && modal.contains(document.activeElement)) {
+      returnFocusTo = trigger;
+    }
+  }
+  syncAdminTileBodyState();
+  if (returnFocusTo && typeof returnFocusTo.focus === 'function') returnFocusTo.focus();
+}
+
+function openAdminTile(modalId) {
+  const modal = document.getElementById(modalId);
+  if (!modal) return;
+  closeAdminTiles();
+  modal.hidden = false;
+  const trigger = document.querySelector(`[data-tile-target="${modalId}"]`);
+  if (trigger) trigger.setAttribute('aria-expanded', 'true');
+  syncAdminTileBodyState();
+  modal.querySelector('.admin-tile-close')?.focus();
+}
+
+for (const trigger of tileTriggers) {
+  trigger.addEventListener('click', () => openAdminTile(trigger.dataset.tileTarget));
+}
+
+for (const modal of tileModals) {
+  modal.addEventListener('click', (event) => {
+    if (event.target.closest('[data-tile-close]')) {
+      closeAdminTiles({ returnFocusTo: document.querySelector(`[data-tile-target="${modal.id}"]`) });
+    }
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !document.body.classList.contains('admin-tile-open')) return;
+  if (blogPostDialog?.open) return;
+  const openModal = [...tileModals].find((modal) => !modal.hidden);
+  const trigger = openModal ? document.querySelector(`[data-tile-target="${openModal.id}"]`) : null;
+  closeAdminTiles({ returnFocusTo: trigger });
+});
+
 initialize();
