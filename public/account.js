@@ -43,29 +43,39 @@
   function renderCheckoutOptions() {
     const opts = [];
     const ganap = config?.ganap;
-    opts.push({
-      value: 'monthly:1',
-      label: 'Monthly subscription — ₱20/month',
-      months: 1,
-      method: 'Manual',
-      amount: 20,
-      disclosure: 'Premium Email Alerts is ₱20 per month. After you submit, your payment request will be recorded as pending until an admin confirms your payment.',
-    });
+    const monthlyPrice = Number(config?.monthlyPrice || 20);
     if (ganap?.enabled) {
+      opts.push({
+        value: 'ganap-monthly:1',
+        label: `Monthly subscription — ${fmtMoney(monthlyPrice)}/month via Ganap`,
+        months: 1,
+        method: 'Ganap',
+        amount: monthlyPrice,
+        disclosure: `You will pay ${fmtMoney(monthlyPrice)} for 1 month of Premium Email Alerts through Ganap. After you continue, you’ll receive the Ganap payment QR/code or redirect to complete payment. Your subscription activates only after server-side payment verification.`,
+      });
       for (const p of (config?.prepaidOptions || [])) {
         const months = Number(p.months);
         const amount = Number(p.amount);
         if (!Number.isInteger(months) || months < 1) continue;
-        if (!Number.isFinite(amount) || amount < Number(ganap.minimumAmount || 200)) continue;
+        if (!Number.isFinite(amount) || amount <= 0) continue;
         opts.push({
           value: `ganap:${months}:${amount}:${p.label}`,
-          label: `${p.label} — ${fmtMoney(amount)}`,
+          label: `${p.label} — ${fmtMoney(amount)} via Ganap`,
           months,
           method: 'Ganap',
           amount,
-          disclosure: `Ganap requires a minimum ₱${Number(ganap.minimumAmount || 200)} charge. This option charges ${fmtMoney(amount)} for ${months} month(s) at the ₱20/month equivalent. You will confirm payment through Ganap.`,
+          disclosure: `You will pay ${fmtMoney(amount)} for ${months} month(s) through Ganap at the ₱20/month equivalent. Your subscription activates only after server-side payment verification.`,
         });
       }
+    } else {
+      opts.push({
+        value: 'monthly:1',
+        label: `Monthly subscription — ${fmtMoney(monthlyPrice)}/month`,
+        months: 1,
+        method: 'Manual',
+        amount: monthlyPrice,
+        disclosure: `Premium Email Alerts is ${fmtMoney(monthlyPrice)} per month. Ganap checkout is currently unavailable. Your payment request will be recorded as pending until an admin confirms your payment.`,
+      });
     }
     checkoutOption.innerHTML = opts.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
     checkoutOption._opts = opts;

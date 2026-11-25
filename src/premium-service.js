@@ -363,10 +363,19 @@ async function createPremiumCheckout({ email, fullName, userId, months, method }
   const normalized = normalizeEmail(email);
   if (!isValidEmail(normalized)) throw new Error('A valid email address is required.');
   const selectedMonths = Number(months);
-  const prepaid = config.prepaidOptions.find((option) => Number(option.months) === selectedMonths);
-  if (!prepaid) throw new Error('Selected payment option is not available.');
-  const amount = Number(prepaid.amount);
-  const chosenMethod = String(method || 'Ganap').trim();
+  if (!Number.isInteger(selectedMonths) || selectedMonths < 1 || selectedMonths > 24) {
+    throw new Error('Invalid subscription period.');
+  }
+  const configuredOption = config.prepaidOptions.find((option) => Number(option.months) === selectedMonths);
+  const monthlyOption = selectedMonths === 1
+    ? { months: 1, amount: Number(config.monthlyPrice || 20), label: `${config.planName || PLAN_NAME} - ₱${Number(config.monthlyPrice || 20)}/month` }
+    : null;
+  const option = configuredOption || monthlyOption;
+  if (!option) throw new Error('Selected payment option is not available.');
+  const amount = Number(option.amount);
+  if (!(amount > 0)) throw new Error('Invalid payment amount.');
+  const ganap = ganapConfig();
+  const chosenMethod = String(method || (ganap.enabled ? 'Ganap' : 'Manual')).trim();
 
   const sub = await ensureSubscription(normalized, { fullName, userId });
   sub.fullName = sanitizeName(fullName || sub.fullName);
@@ -374,10 +383,7 @@ async function createPremiumCheckout({ email, fullName, userId, months, method }
   await saveSubscription(sub);
 
   if (chosenMethod === 'Ganap') {
-    if (!ganapConfig().configured) throw new Error('Ganap payment is not configured. Please choose an available payment method.');
-    if (amount < 200) {
-      throw new Error('Ganap requires a minimum payment of ₱200. Choose a prepaid option that preserves the ₱20/month equivalent, or use an admin-configured alternative payment method.');
-    }
+    if (!ganap.configured) throw new Error('Ganap payment is not configured. Please contact support.');
     const payment = await createPayment({
       email: normalized,
       userId: userId || sub.userId || null,
@@ -387,30 +393,37 @@ async function createPremiumCheckout({ email, fullName, userId, months, method }
       status: 'Pending',
       months: selectedMonths,
       type: 'ganap_checkout',
-      metadata: { fullName: sanitizeName(fullName), prepaidLabel: prepaid.label },
+      metadata: { fullName: sanitizeName(fullName), prepaidLabel: option.label, monthlyEquivalent: 20 },
     });
     await addAuditLog({ action: 'payment_checkout_created', actor: normalized, email: normalized, details: { paymentId: payment.id, amount, months: selectedMonths, method: 'Ganap' } });
-    const checkout = await createGanapCheckout({ email: normalized, fullName, months: selectedMonths, amount, paymentId: payment.id, userId });
-    payment.reference = checkout.referenceNumber || '';
-    payment.metadata = { ...payment.metadata, ganap: checkout.raw };
-    await savePayment(payment);
-    return { payment, checkout, prepaid };
+    try {
+      const checkout = await createGanapCheckout({ email: normalized, fullName, months: selectedMonths, amount, paymentId: payment.id, userId });
+      payment.reference = checkout.referenceNumber || '';
+      payment.metadata = { ...payment.metadata, ganap: checkout.raw };
+      await savePayment(payment);
+      return { payment, checkout, prepaid: option };
+    } catch (error) {
+      payment.status = 'Failed';
+      payment.metadata = { ...payment.metadata, error: error.message };
+      await savePayment(payment);
+      await addAuditLog({ action: 'payment_checkout_failed', actor: normalized, email: normalized, details: { paymentId: payment.id, amount, months: selectedMonths, error: error.message } });
+      throw error;
+    }
   }
 
-  // Alternative/manual method - create pending payment record and instructions
   const payment = await createPayment({
     email: normalized,
     userId: userId || sub.userId || null,
     amount,
-    method: chosenMethod,
+    method: chosenMethod || 'Manual',
     reference: '',
     status: 'Pending',
     months: selectedMonths,
     type: 'manual_pending',
-    metadata: { fullName: sanitizeName(fullName), prepaidLabel: prepaid.label },
+    metadata: { fullName: sanitizeName(fullName), prepaidLabel: option.label },
   });
-  await addAuditLog({ action: 'payment_pending_manual', actor: normalized, email: normalized, details: { paymentId: payment.id, amount, months: selectedMonths, method: chosenMethod } });
-  return { payment, checkout: null, prepaid, manual: true };
+  await addAuditLog({ action: 'payment_pending_manual', actor: normalized, email: normalized, details: { paymentId: payment.id, amount, months: selectedMonths, method: chosenMethod || 'Manual' } });
+  return { payment, checkout: null, prepaid: option, manual: true };
 }
 
 async function sendPremiumResultAlert(subscriber, results, { resend = false, idempotencyKey } = {}) {
