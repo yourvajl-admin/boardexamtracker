@@ -26,6 +26,47 @@ const {
   removeSubscriberByEmail,
   redisCommand,
 } = require('./subscriptions');
+const {
+  addAuditLog,
+  addMonthsToDate,
+  createOrGetUser,
+  createPayment,
+  effectiveStatus,
+  getActivePremiumSubscribers,
+  getConfig,
+  getPaymentById,
+  getSubscriptionByEmail,
+  getUserByEmail,
+  getUserById,
+  isValidEmail,
+  listAllPayments,
+  listAuditLogs,
+  listEmailLogs,
+  listPaymentsByEmail,
+  listSubscriptions,
+  normalizeEmail,
+  publicSubscription,
+  saveConfig,
+  savePayment,
+  saveSubscription,
+  saveUser,
+} = require('./premium-store');
+const premiumAuth = require('./premium-auth');
+const {
+  activateSubscription,
+  applyManualSubscription,
+  cancelSubscription,
+  createPremiumCheckout,
+  ensureSubscription,
+  expireDueSubscriptions,
+  formatDate,
+  formatPhp,
+  ganapConfig,
+  handleGanapCallback,
+  notifyPremiumSubscribers,
+  sendPremiumAlertToSubscriber,
+  sendSubscriptionActivatedEmail,
+} = require('./premium-service');
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -413,8 +454,14 @@ app.use((req, res, next) => {
   const isBlogWrite = ['POST', 'PUT'].includes(req.method) && req.path.startsWith('/api/admin/blog/posts');
   const isDonationWrite = ['POST', 'PUT', 'DELETE'].includes(req.method) && req.path.startsWith('/api/admin/donation');
   const isOutfitWrite = ['POST', 'PUT', 'DELETE'].includes(req.method) && req.path.startsWith('/api/admin/outfits');
-  const limit = isCronPayload ? '1mb' : (isBlogWrite || isDonationWrite || isOutfitWrite) ? '2mb' : '10kb';
-  return express.json({ limit })(req, res, next);
+  const isPremiumAdminWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && req.path.startsWith('/api/admin/premium');
+  const limit = isCronPayload ? '1mb' : (isBlogWrite || isDonationWrite || isOutfitWrite || isPremiumAdminWrite) ? '2mb' : '20kb';
+  return express.json({
+    limit,
+    verify(req, _res, buf) {
+      req.rawBody = buf;
+    },
+  })(req, res, next);
 });
 app.get('/sitemap.xml', async (_req, res) => {
   try {
@@ -652,9 +699,24 @@ app.post('/api/admin/logout', (req, res) => {
 });
 app.get('/api/admin/subscribers', requireAdmin, async (_req, res) => {
   try {
-    const migration = await migrateLegacySubscribers();
-    const subscribers = await listSubscribersForAdmin();
-    return res.json({ subscribers, migration, persistentStorage: isPersistentStorageConfigured(), production: process.env.NODE_ENV === 'production' });
+    await expireDueSubscriptions().catch(() => {});
+    const subscribers = await buildAdminSubscriberView();
+    const mapped = subscribers.map((s) => ({
+      email: s.email,
+      fullName: s.fullName,
+      status: s.status === 'active' ? 'confirmed' : s.status,
+      subscriptionStatus: s.status,
+      subscribedAt: s.createdAt,
+      confirmedAt: s.emailVerified ? s.createdAt : null,
+      startDate: s.startDate,
+      expirationDate: s.expirationDate,
+      paymentMethod: s.paymentMethod,
+      amountPaid: s.amountPaid,
+      paymentStatus: s.paymentStatus,
+      userId: s.userId,
+      adminNotes: s.adminNotes,
+    }));
+    return res.json({ subscribers: mapped, persistentStorage: isPersistentStorageConfigured(), production: process.env.NODE_ENV === 'production', premium: true });
   } catch (error) {
     console.error('Could not load admin subscriber list:', error.message);
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Check the private storage settings.' });
@@ -927,8 +989,8 @@ function emailProviderFailureMessage(error) {
 
 const adminResultEmailAttempts = new Map();
 app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Enter a valid email address.' });
   }
   if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
@@ -936,7 +998,7 @@ app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
   const now = Date.now();
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const recent = (adminResultEmailAttempts.get(ip) || []).filter((timestamp) => now - timestamp < 60 * 60 * 1000);
-  if (recent.length >= 3) return res.status(429).json({ error: 'Send limit reached. Try again later.' });
+  if (recent.length >= 5) return res.status(429).json({ error: 'Send limit reached. Try again later.' });
   recent.push(now);
   adminResultEmailAttempts.set(ip, recent);
 
@@ -950,7 +1012,12 @@ app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
   if (!latest) return res.status(503).json({ error: 'No current result announcement is available to send.' });
 
   try {
-    await sendResultAlert({ email }, [latest]);
+    await expireDueSubscriptions().catch(() => {});
+    const sub = await getSubscriptionByEmail(email);
+    if (!sub || effectiveStatus(sub) !== 'active') {
+      return res.status(403).json({ error: 'Email alerts can only be sent to active Premium subscribers.' });
+    }
+    await sendPremiumAlertToSubscriber(sub, [latest], { actor: req.admin?.username || 'admin', reason: 'admin_send_latest' });
     return res.json({ sent: true, title: latest.title });
   } catch (error) {
     console.error('Email provider failed to send latest-result alert:', error.message);
@@ -959,8 +1026,8 @@ app.post('/api/admin/send-latest-result', requireAdmin, async (req, res) => {
 });
 const adminResendAttempts = new Map();
 app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) => {
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Enter a valid subscriber email.' });
   }
   if (!isEmailConfigured()) return res.status(503).json({ error: 'Email sending is not configured.' });
@@ -969,8 +1036,11 @@ app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) =
   }
 
   try {
-    const subscriber = (await listConfirmedSubscribers()).find((item) => item.email === email);
-    if (!subscriber) return res.status(404).json({ error: 'No confirmed subscriber was found for this email.' });
+    await expireDueSubscriptions().catch(() => {});
+    const sub = await getSubscriptionByEmail(email);
+    if (!sub || effectiveStatus(sub) !== 'active') {
+      return res.status(404).json({ error: 'No active Premium subscriber was found for this email.' });
+    }
 
     const lastSentAt = adminResendAttempts.get(email) || 0;
     if (Date.now() - lastSentAt < 60_000) {
@@ -980,12 +1050,7 @@ app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) =
     const latest = await getLatestAvailableResult();
     if (!latest) return res.status(503).json({ error: 'No current result announcement with a valid official source is available to send.' });
 
-    try {
-      await sendResultAlert(subscriber, [latest], { resend: true });
-    } catch (error) {
-      console.error('Email provider failed to resend latest-result alert:', error.message);
-      return res.status(502).json({ error: emailProviderFailureMessage(error) });
-    }
+    await sendPremiumAlertToSubscriber(sub, [latest], { actor: req.admin?.username || 'admin', reason: 'admin_resend_latest', resend: true });
     adminResendAttempts.set(email, Date.now());
     return res.json({ sent: true, title: latest.title });
   } catch (error) {
@@ -994,18 +1059,20 @@ app.post('/api/admin/subscribers/resend-alert', requireAdmin, async (req, res) =
   }
 });
 app.post('/api/admin/subscribers/unsubscribe', requireAdmin, async (req, res) => {
-  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'Enter a valid subscriber email.' });
   }
   if (!isPersistentStorageConfigured()) {
     return res.status(503).json({ error: 'Configure Upstash Redis REST credentials for subscriber management.' });
   }
   try {
-    const removed = await removeSubscriberByEmail(email);
-    return removed ? res.json({ removed: true }) : res.status(404).json({ error: 'Subscriber not found.' });
+    const sub = await getSubscriptionByEmail(email);
+    if (!sub) return res.status(404).json({ error: 'Subscriber not found.' });
+    await cancelSubscription(email, req.admin?.username || 'admin', 'Cancelled by admin from dashboard');
+    return res.json({ removed: true, cancelled: true });
   } catch (error) {
-    console.error('Could not manually unsubscribe subscriber:', error.message);
+    console.error('Could not manually cancel subscriber:', error.message);
     return res.status(503).json({ error: 'Subscriber storage is unavailable. Try again later.' });
   }
 });
@@ -1036,6 +1103,732 @@ app.post('/api/viewers/heartbeat', async (req, res) => {
     return res.status(400).json({ error: error.message || 'Could not record viewer.' });
   }
 });
+
+function requirePremiumUser(req, res, next) {
+  const session = premiumAuth.getSession(req);
+  if (!session) return res.status(401).json({ error: 'Sign in required.' });
+  req.premiumSession = session;
+  return next();
+}
+
+function sanitizeAdminNotes(value) {
+  return typeof value === 'string' ? value.trim().slice(0, 2000) : '';
+}
+
+function parsePositiveInt(value, fallback = 1) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+async function buildAdminSubscriberView() {
+  await expireDueSubscriptions().catch(() => {});
+  const [subs, payments, users] = await Promise.all([listSubscriptions(), listAllPayments(2000), (async () => {
+    const raw = await redisCommand('HGETALL', 'boardexamtracker:premium:users');
+    const values = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? Object.entries(raw).flat() : [];
+    const out = [];
+    for (let i = 0; i + 1 < values.length; i += 2) { try { out.push(JSON.parse(values[i + 1])); } catch {} }
+    return out;
+  })()]);
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const paymentsByEmail = new Map();
+  for (const p of payments) {
+    const email = normalizeEmail(p.email);
+    if (!paymentsByEmail.has(email)) paymentsByEmail.set(email, []);
+    paymentsByEmail.get(email).push(p);
+  }
+  return subs.map((sub) => {
+    const email = normalizeEmail(sub.email);
+    const user = sub.userId ? usersById.get(sub.userId) : users.find((u) => normalizeEmail(u.email) === email);
+    const subPayments = (paymentsByEmail.get(email) || []).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    const lastPayment = subPayments[0] || null;
+    return {
+      id: sub.id || email,
+      fullName: sub.fullName || user?.fullName || '',
+      email,
+      alertEmail: sub.alertEmail || email,
+      userId: sub.userId || user?.id || null,
+      hasAccount: Boolean(sub.userId || user),
+      status: effectiveStatus(sub),
+      rawStatus: sub.status || 'expired',
+      startDate: sub.startDate || null,
+      expirationDate: sub.expirationDate || null,
+      amountPaid: lastPayment ? Number(lastPayment.amount) || 0 : 0,
+      paymentMethod: lastPayment?.method || sub.lastPaymentMethod || '',
+      paymentReference: lastPayment?.reference || '',
+      paymentStatus: lastPayment?.status || '',
+      adminNotes: sub.adminNotes || '',
+      complimentary: Boolean(sub.complimentary),
+      cancelAtPeriodEnd: Boolean(sub.cancelAtPeriodEnd),
+      emailVerified: Boolean(sub.emailVerifiedAt || user?.emailVerifiedAt),
+      createdAt: sub.createdAt || null,
+      updatedAt: sub.updatedAt || null,
+      paymentHistory: subPayments.slice(0, 20),
+    };
+  }).sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+}
+
+function csvEscape(value) {
+  const str = String(value ?? '');
+  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+app.get('/account', (_req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'account.html'), { headers: { 'Cache-Control': 'no-cache, must-revalidate' } });
+});
+
+app.get('/api/premium/config', async (_req, res) => {
+  try {
+    const config = await getConfig();
+    const ganap = ganapConfig();
+    res.json({
+      planName: config.planName,
+      monthlyPrice: config.monthlyPrice,
+      ganap: { enabled: Boolean(config.ganapEnabled && ganap.configured), configured: ganap.configured, minimumAmount: 200 },
+      alternativeMethods: config.alternativeMethods,
+      prepaidOptions: config.prepaidOptions,
+      currency: 'PHP',
+    });
+  } catch (error) {
+    res.status(503).json({ error: 'Could not load subscription options.' });
+  }
+});
+
+async function sendPremiumVerificationEmail(user) {
+  if (!isEmailConfigured()) throw new Error('Email delivery is not configured.');
+  const token = premiumAuth.makeToken();
+  user.emailVerificationToken = token;
+  user.emailVerificationExpiresAt = Date.now() + 24 * 60 * 60 * 1000;
+  await saveUser(user);
+  const baseUrl = publicBaseUrl();
+  const verifyUrl = `${baseUrl}/api/premium/verify-email?token=${encodeURIComponent(token)}`;
+  await sendEmail({
+    to: user.email,
+    subject: 'Verify your BoardExamTracker account',
+    html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">Verify your email address</h1><p>Confirm your email address to activate your BoardExamTracker account and manage your Premium Email Alerts subscription.</p><p><a href="${escapeEmailHtml(verifyUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">Verify email address</a></p><p>If you did not create this account, you can ignore this email.</p></div>`,
+    text: `Verify your BoardExamTracker account: ${verifyUrl}`,
+  });
+}
+
+app.post('/api/premium/register', async (req, res) => {
+  try {
+    if (!premiumAuth.isConfigured()) return res.status(503).json({ error: 'Subscriber accounts are not configured on this server yet.' });
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const fullName = String(req.body?.fullName || '').trim().slice(0, 120);
+    if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'An account with this email already exists. Please sign in.' });
+    const passwordHash = premiumAuth.hashPassword(password);
+    const { user } = await createOrGetUser({ email, fullName, passwordHash });
+    user.passwordHash = passwordHash;
+    user.fullName = fullName || user.fullName;
+    user.emailVerifiedAt = null;
+    await saveUser(user);
+    await sendPremiumVerificationEmail(user);
+    await addAuditLog({ action: 'subscriber_registered_pending_verification', actor: email, email, details: { userId: user.id } });
+    return res.json({ ok: true, requiresVerification: true, message: 'Check your email to verify your account before signing in.' });
+  } catch (error) {
+    console.error('Premium register failed:', error.message);
+    return res.status(500).json({ error: error.message || 'Could not create account.' });
+  }
+});
+
+async function completePremiumEmailVerification(req, res) {
+  const token = String(req.query.token || req.body?.token || '');
+  if (!/^[a-f0-9]{64}$/.test(token)) return emailResultPage(res, 'Invalid link', 'This email verification link is not valid.', false);
+  try {
+    const rawUsers = await redisCommand('HGETALL', 'boardexamtracker:premium:users');
+    const values = Array.isArray(rawUsers) ? rawUsers : rawUsers && typeof rawUsers === 'object' ? Object.entries(rawUsers).flat() : [];
+    let user = null;
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      try { const u = JSON.parse(values[i + 1]); if (u?.emailVerificationToken === token) { user = u; break; } } catch {}
+    }
+    if (!user || !user.emailVerificationExpiresAt || Date.now() > Number(user.emailVerificationExpiresAt)) {
+      return emailResultPage(res, 'Link expired', 'This verification link is invalid or expired. Please register or request a new verification email.', false);
+    }
+    user.emailVerifiedAt = new Date().toISOString();
+    user.emailVerificationToken = null;
+    user.emailVerificationExpiresAt = null;
+    await saveUser(user);
+    const email = normalizeEmail(user.email);
+    let sub = await getSubscriptionByEmail(email);
+    if (sub) {
+      if (sub.userId && sub.userId !== user.id) {
+        return emailResultPage(res, 'Account conflict', 'This subscription is already linked to another account. Please contact support.', false);
+      }
+      sub.userId = user.id;
+      sub.fullName = user.fullName || sub.fullName;
+      sub.emailVerifiedAt = user.emailVerifiedAt;
+      if (!sub.alertEmail) sub.alertEmail = email;
+      await saveSubscription(sub);
+      await addAuditLog({ action: 'subscriber_account_linked', actor: email, email, details: { userId: user.id, subscriptionStatus: effectiveStatus(sub) } });
+    } else {
+      sub = await ensureSubscription(email, { fullName: user.fullName, userId: user.id, emailVerifiedAt: user.emailVerifiedAt });
+    }
+    await addAuditLog({ action: 'subscriber_email_verified', actor: email, email, details: { userId: user.id } });
+    return emailResultPage(res, 'Email verified', 'Your email is verified and your account is ready. You can now sign in to manage your Premium Email Alerts subscription.', true);
+  } catch (error) {
+    console.error('Premium email verification failed:', error.message);
+    return emailResultPage(res, 'Verification failed', 'We could not verify your email address. Please try again.', false);
+  }
+}
+
+app.get('/api/premium/verify-email', async (req, res) => {
+  const token = String(req.query.token || '');
+  if (!/^[a-f0-9]{64}$/.test(token)) return completePremiumEmailVerification(req, res);
+  return res.type('html').send(emailActionPage('Verify your email', 'Confirm your email address to activate your BoardExamTracker account.', escapeHtml(token), '/api/premium/verify-email/confirm', 'Verify email address'));
+});
+app.post('/api/premium/verify-email/confirm', express.urlencoded({ extended: false, limit: '2kb' }), completePremiumEmailVerification);
+
+app.post('/api/premium/forgot-password', async (req, res) => {
+  try {
+    if (!premiumAuth.isConfigured()) return res.status(503).json({ error: 'Subscriber accounts are not configured on this server yet.' });
+    const email = normalizeEmail(req.body?.email);
+    if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const user = await getUserByEmail(email);
+    if (user && isEmailConfigured()) {
+      const token = premiumAuth.makeToken();
+      user.passwordResetToken = token;
+      user.passwordResetExpiresAt = Date.now() + 60 * 60 * 1000;
+      await saveUser(user);
+      const baseUrl = publicBaseUrl();
+      const resetUrl = `${baseUrl}/account?reset=${encodeURIComponent(token)}`;
+      await sendEmail({
+        to: email,
+        subject: 'Reset your BoardExamTracker password',
+        html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">Reset your password</h1><p>Use the link below to reset your BoardExamTracker account password. This link expires in 1 hour.</p><p><a href="${escapeEmailHtml(resetUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">Reset password</a></p><p>If you did not request this, you can ignore this email.</p></div>`,
+        text: `Reset your BoardExamTracker password: ${resetUrl}`,
+      });
+      await addAuditLog({ action: 'subscriber_password_reset_requested', actor: email, email, details: { userId: user.id } });
+    }
+    return res.json({ ok: true, message: 'If an account exists for that email, a password reset link has been sent.' });
+  } catch (error) {
+    console.error('Forgot password failed:', error.message);
+    return res.status(500).json({ error: 'Could not process password reset request.' });
+  }
+});
+
+app.post('/api/premium/reset-password', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const password = String(req.body?.password || '');
+    if (!/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({ error: 'Invalid or expired reset link.' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    const rawUsers = await redisCommand('HGETALL', 'boardexamtracker:premium:users');
+    const values = Array.isArray(rawUsers) ? rawUsers : rawUsers && typeof rawUsers === 'object' ? Object.entries(rawUsers).flat() : [];
+    let user = null;
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      try { const u = JSON.parse(values[i + 1]); if (u?.passwordResetToken === token) { user = u; break; } } catch {}
+    }
+    if (!user || !user.passwordResetExpiresAt || Date.now() > Number(user.passwordResetExpiresAt)) {
+      return res.status(400).json({ error: 'Invalid or expired reset link.' });
+    }
+    user.passwordHash = premiumAuth.hashPassword(password);
+    user.passwordResetToken = null;
+    user.passwordResetExpiresAt = null;
+    await saveUser(user);
+    await addAuditLog({ action: 'subscriber_password_reset', actor: user.email, email: normalizeEmail(user.email), details: { userId: user.id } });
+    return res.json({ ok: true, message: 'Password updated. You can now sign in.' });
+  } catch (error) {
+    console.error('Reset password failed:', error.message);
+    return res.status(500).json({ error: 'Could not reset password.' });
+  }
+});
+
+app.post('/api/premium/login', async (req, res) => {
+  try {
+    if (!premiumAuth.isConfigured()) return res.status(503).json({ error: 'Subscriber accounts are not configured on this server yet.' });
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    if (!isValidEmail(email) || !password) return res.status(400).json({ error: 'Email and password are required.' });
+    const user = await getUserByEmail(email);
+    if (!user || !user.passwordHash || !premiumAuth.verifyPassword(password, user.passwordHash)) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+    if (!user.emailVerifiedAt) {
+      return res.status(403).json({ error: 'Please verify your email address before signing in. Check your inbox for the verification email.', requiresVerification: true });
+    }
+    const token = premiumAuth.createSession(user.id, user.email);
+    premiumAuth.setSessionCookie(res, req, token);
+    await addAuditLog({ action: 'subscriber_login', actor: email, email, details: { userId: user.id } });
+    return res.json({ ok: true, user: { id: user.id, email: user.email, fullName: user.fullName || '' } });
+  } catch (error) {
+    console.error('Premium login failed:', error.message);
+    return res.status(500).json({ error: 'Could not sign in.' });
+  }
+});
+
+app.post('/api/premium/logout', (req, res) => {
+  premiumAuth.clearSessionCookie(res, req);
+  res.json({ ok: true });
+});
+
+app.get('/api/premium/me', requirePremiumUser, async (req, res) => {
+  try {
+    const user = await getUserById(req.premiumSession.sub);
+    if (!user) return res.status(401).json({ error: 'Sign in required.' });
+    await expireDueSubscriptions().catch(() => {});
+    let sub = await getSubscriptionByEmail(user.email);
+    if (!sub) sub = await ensureSubscription(user.email, { fullName: user.fullName, userId: user.id, emailVerifiedAt: user.emailVerifiedAt });
+    if (!sub.userId) { sub.userId = user.id; await saveSubscription(sub); }
+    const payments = await listPaymentsByEmail(user.email);
+    res.json({
+      user: { id: user.id, email: user.email, fullName: user.fullName || '', emailVerifiedAt: user.emailVerifiedAt || null },
+      subscription: publicSubscription(sub, user),
+      payments: payments.slice(0, 50).map((p) => ({ id: p.id, amount: p.amount, currency: p.currency || 'PHP', method: p.method, reference: p.reference, status: p.status, months: p.months, createdAt: p.createdAt, paidAt: p.paidAt || null })),
+      config: await getConfig(),
+      ganap: { configured: ganapConfig().configured },
+    });
+  } catch (error) {
+    console.error('Premium me failed:', error.message);
+    res.status(500).json({ error: 'Could not load account.' });
+  }
+});
+
+app.post('/api/premium/checkout', requirePremiumUser, async (req, res) => {
+  try {
+    const user = await getUserById(req.premiumSession.sub);
+    if (!user) return res.status(401).json({ error: 'Sign in required.' });
+    const months = Number(req.body?.months);
+    const method = String(req.body?.method || 'Ganap').trim();
+    const fullName = String(req.body?.fullName || user.fullName || '').trim().slice(0, 120);
+    const result = await createPremiumCheckout({ email: user.email, fullName, userId: user.id, months, method });
+    if (result.manual) {
+      return res.json({
+        ok: true,
+        manual: true,
+        payment: { id: result.payment.id, status: result.payment.status, amount: result.payment.amount, months: result.payment.months, method: result.payment.method },
+        message: `Your ${result.prepaid.label} request was recorded as pending. An admin can confirm this ${result.payment.method} payment after it is received.`,
+      });
+    }
+    const redirectUrl = result.checkout?.redirectUrl;
+    let redirectType = 'url';
+    if (typeof redirectUrl === 'string') {
+      if (redirectUrl.startsWith('data:image') || /\.(png|jpg|jpeg|webp|gif)(\?|$)/i.test(redirectUrl)) redirectType = 'image';
+      else if (/^https?:\/\//i.test(redirectUrl)) redirectType = 'url';
+      else redirectType = 'qr_payload';
+    }
+    return res.json({
+      ok: true,
+      payment: { id: result.payment.id, status: result.payment.status, amount: result.payment.amount, months: result.payment.months, method: result.payment.method },
+      checkout: { redirectUrl, redirectType, referenceNumber: result.checkout?.referenceNumber || '' },
+      prepaid: result.prepaid,
+    });
+  } catch (error) {
+    console.error('Premium checkout failed:', error.message);
+    return res.status(400).json({ error: error.message || 'Could not start checkout.' });
+  }
+});
+
+async function ganapWebhookHandler(req, res) {
+  try {
+    const rawBody = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body || {});
+    const result = await handleGanapCallback(req.body, rawBody, req.get('X-Ganap-Signature'));
+    if (!result.ok) return res.status(result.status || 400).json({ error: result.error || 'Webhook rejected.' });
+    return res.status(200).json({ ok: true, ignored: Boolean(result.ignored), duplicate: Boolean(result.duplicate), activated: Boolean(result.activated) });
+  } catch (error) {
+    console.error('Ganap webhook failed:', error.message);
+    return res.status(500).json({ error: 'Webhook processing failed.' });
+  }
+}
+
+app.post('/api/premium/ganap/webhook', ganapWebhookHandler);
+app.post('/api/webhooks/ganap', ganapWebhookHandler);
+
+app.post('/api/premium/cancel', requirePremiumUser, async (req, res) => {
+  try {
+    const user = await getUserById(req.premiumSession.sub);
+    if (!user) return res.status(401).json({ error: 'Sign in required.' });
+    const sub = await getSubscriptionByEmail(user.email);
+    if (!sub) return res.status(404).json({ error: 'No subscription found.' });
+    await cancelSubscription(user.email, user.email, 'Cancelled by subscriber from dashboard');
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Could not cancel subscription.' });
+  }
+});
+
+app.post('/api/premium/alerts', requirePremiumUser, async (req, res) => {
+  try {
+    const user = await getUserById(req.premiumSession.sub);
+    if (!user) return res.status(401).json({ error: 'Sign in required.' });
+    const sub = await getSubscriptionByEmail(user.email);
+    if (!sub) return res.status(404).json({ error: 'No subscription found.' });
+    sub.alertsPaused = Boolean(req.body?.paused);
+    sub.updatedAt = new Date().toISOString();
+    await saveSubscription(sub);
+    await addAuditLog({ action: sub.alertsPaused ? 'subscriber_alerts_paused' : 'subscriber_alerts_resumed', actor: user.email, email: user.email, details: { alertsPaused: sub.alertsPaused } });
+    return res.json({ ok: true, alertsPaused: sub.alertsPaused });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Could not update email alert setting.' });
+  }
+});
+
+app.post('/api/premium/email-change/request', requirePremiumUser, async (req, res) => {
+  try {
+    const user = await getUserById(req.premiumSession.sub);
+    if (!user) return res.status(401).json({ error: 'Sign in required.' });
+    const newEmail = normalizeEmail(req.body?.newEmail);
+    if (!isValidEmail(newEmail)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (newEmail === normalizeEmail(user.email)) return res.status(400).json({ error: 'That is already your email address.' });
+    const existing = await getUserByEmail(newEmail);
+    if (existing) return res.status(409).json({ error: 'That email address is already in use.' });
+    if (!isEmailConfigured()) return res.status(503).json({ error: 'Email delivery is not configured.' });
+    const token = premiumAuth.makeToken();
+    user.pendingEmail = newEmail;
+    user.pendingEmailToken = token;
+    user.pendingEmailExpiresAt = Date.now() + 24 * 60 * 60 * 1000;
+    await saveUser(user);
+    const baseUrl = publicBaseUrl();
+    const confirmUrl = `${baseUrl}/api/premium/email-change/confirm?token=${encodeURIComponent(token)}`;
+    await sendEmail({
+      to: newEmail,
+      subject: 'Confirm your new BoardExamTracker email address',
+      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">Confirm your new email address</h1><p>Click below to confirm this email address for your BoardExamTracker Premium account.</p><p><a href="${escapeEmailHtml(confirmUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">Confirm email address</a></p><p>If you did not request this change, you can ignore this email.</p></div>`,
+      text: `Confirm your new BoardExamTracker email address: ${confirmUrl}`,
+    });
+    await addAuditLog({ action: 'subscriber_email_change_requested', actor: user.email, email: user.email, details: { newEmail } });
+    return res.json({ ok: true, message: 'Confirmation email sent to your new address.' });
+  } catch (error) {
+    console.error('Email change request failed:', error.message);
+    return res.status(500).json({ error: 'Could not request email change.' });
+  }
+});
+
+async function handlePremiumEmailChangeConfirm(req, res) {
+  const token = String(req.query.token || req.body?.token || '');
+  if (!/^[a-f0-9]{64}$/.test(token)) return emailResultPage(res, 'Invalid link', 'This email confirmation link is not valid.', false);
+  try {
+    const rawUsers = await redisCommand('HGETALL', 'boardexamtracker:premium:users');
+    const values = Array.isArray(rawUsers) ? rawUsers : rawUsers && typeof rawUsers === 'object' ? Object.entries(rawUsers).flat() : [];
+    let user = null;
+    for (let i = 0; i + 1 < values.length; i += 2) {
+      try { const u = JSON.parse(values[i + 1]); if (u?.pendingEmailToken === token) { user = u; break; } } catch {}
+    }
+    if (!user || !user.pendingEmail || !user.pendingEmailExpiresAt || Date.now() > Number(user.pendingEmailExpiresAt)) {
+      return emailResultPage(res, 'Link expired', 'This email confirmation link is invalid or expired.', false);
+    }
+    const oldEmail = normalizeEmail(user.email);
+    const newEmail = normalizeEmail(user.pendingEmail);
+    const existing = await getUserByEmail(newEmail);
+    if (existing && existing.id !== user.id) return emailResultPage(res, 'Email in use', 'That email address is already in use.', false);
+    await redisCommand('HDEL', 'boardexamtracker:premium:user-email-index', oldEmail);
+    user.email = newEmail;
+    user.emailVerifiedAt = new Date().toISOString();
+    user.pendingEmail = null;
+    user.pendingEmailToken = null;
+    user.pendingEmailExpiresAt = null;
+    await saveUser(user);
+    const sub = await getSubscriptionByEmail(oldEmail);
+    if (sub) {
+      await redisCommand('HDEL', 'boardexamtracker:premium:subscriptions', oldEmail);
+      sub.email = newEmail;
+      sub.alertEmail = newEmail;
+      sub.userId = user.id;
+      sub.emailVerifiedAt = user.emailVerifiedAt;
+      await saveSubscription(sub);
+      await addAuditLog({ action: 'subscription_email_changed', actor: oldEmail, email: newEmail, details: { oldEmail, newEmail, userId: user.id } });
+    } else {
+      await ensureSubscription(newEmail, { fullName: user.fullName, userId: user.id, emailVerifiedAt: user.emailVerifiedAt });
+    }
+    await addAuditLog({ action: 'subscriber_email_changed', actor: oldEmail, email: newEmail, details: { oldEmail, newEmail } });
+    return emailResultPage(res, 'Email updated', 'Your email address has been updated. Please sign in again with your new email.', true);
+  } catch (error) {
+    console.error('Email change confirm failed:', error.message);
+    return emailResultPage(res, 'Could not update email', 'We could not update your email address. Please try again.', false);
+  }
+}
+
+app.get('/api/premium/email-change/confirm', handlePremiumEmailChangeConfirm);
+app.get('/api/premium/email-change', async (req, res) => {
+  const token = String(req.query.token || '');
+  res.type('html').send(emailActionPage('Confirm email change', 'Confirm that you want to update your BoardExamTracker account email address.', escapeHtml(token), '/api/premium/email-change/confirm-post', 'Confirm email change'));
+});
+app.post('/api/premium/email-change/confirm-post', express.urlencoded({ extended: false, limit: '2kb' }), handlePremiumEmailChangeConfirm);
+
+async function adminActor(req) {
+  return req.admin?.username || 'admin';
+}
+
+app.get('/api/admin/premium/subscribers', requireAdmin, async (_req, res) => {
+  try {
+    const subscribers = await buildAdminSubscriberView();
+    const now = Date.now();
+    const active = subscribers.filter((s) => s.status === 'active');
+    const expired = subscribers.filter((s) => s.status === 'expired');
+    const pending = subscribers.filter((s) => s.status === 'pending');
+    const complimentary = subscribers.filter((s) => s.complimentary);
+    const payments = await listAllPayments(2000);
+    const revenue = payments.filter((p) => p.status === 'paid' && !p.complimentary).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const emailLogs = await listEmailLogs(2000);
+    const alertsSent = emailLogs.filter((l) => l.type === 'result_alert' && l.status === 'sent').length;
+    res.json({
+      stats: {
+        totalSubscribers: subscribers.length,
+        activePremiumSubscribers: active.length,
+        expiredSubscribers: expired.length,
+        pendingPayments: pending.length,
+        complimentarySubscribers: complimentary.length,
+        subscriptionRevenue: revenue,
+        totalEmailAlertsSent: alertsSent,
+      },
+      subscribers,
+    });
+  } catch (error) {
+    console.error('Admin premium subscribers failed:', error.message);
+    res.status(500).json({ error: 'Could not load subscribers.' });
+  }
+});
+
+app.post('/api/admin/premium/subscribers', requireAdmin, async (req, res) => {
+  try {
+    const actor = await adminActor(req);
+    const email = normalizeEmail(req.body?.email);
+    const fullName = String(req.body?.fullName || '').trim().slice(0, 120);
+    const userId = String(req.body?.userId || '').trim() || null;
+    const startDate = req.body?.startDate ? new Date(req.body.startDate).toISOString() : new Date().toISOString();
+    const expirationDate = req.body?.expirationDate ? new Date(req.body.expirationDate).toISOString() : addMonthsToDate(startDate, parsePositiveInt(req.body?.durationMonths, 1));
+    const amountPaid = Number(req.body?.amountPaid || 0);
+    const paymentMethod = String(req.body?.paymentMethod || 'Other').trim();
+    const paymentReference = String(req.body?.paymentReference || '').trim().slice(0, 200);
+    const paymentStatus = String(req.body?.paymentStatus || 'Paid').trim();
+    const subscriptionStatus = String(req.body?.subscriptionStatus || 'Active').trim().toLowerCase();
+    const adminNotes = sanitizeAdminNotes(req.body?.adminNotes);
+    if (!isValidEmail(email)) return res.status(400).json({ error: 'Valid email address is required.' });
+    if (subscriptionStatus === 'active') {
+      const existing = await getSubscriptionByEmail(email);
+      if (existing && effectiveStatus(existing) === 'active' && normalizeEmail(existing.email) === email) {
+        // allow updating same record through edit; add should prevent duplicate active by other record? same email means same record in our store.
+      }
+    }
+    let linkedUserId = userId;
+    if (linkedUserId) {
+      const u = await getUserById(linkedUserId);
+      if (!u) return res.status(400).json({ error: 'User ID not found.' });
+    } else {
+      const byEmail = await getUserByEmail(email);
+      if (byEmail) linkedUserId = byEmail.id;
+    }
+    const sub = await applyManualSubscription({
+      email, fullName, userId: linkedUserId, startDate, expirationDate, amountPaid,
+      paymentMethod, paymentReference, paymentStatus, status: subscriptionStatus, adminNotes,
+      complimentary: paymentStatus.toLowerCase() === 'complimentary' || Boolean(req.body?.complimentary),
+      actor,
+    });
+    await addAuditLog({ action: 'admin_subscriber_added', actor, email, details: { subscriptionStatus, amountPaid, paymentMethod, paymentReference } });
+    if (effectiveStatus(sub) === 'active') sendSubscriptionActivatedEmail(sub).catch(() => {});
+    res.json({ ok: true, subscription: publicSubscription(sub) });
+  } catch (error) {
+    console.error('Admin add subscriber failed:', error.message);
+    res.status(400).json({ error: error.message || 'Could not add subscriber.' });
+  }
+});
+
+app.put('/api/admin/premium/subscribers/:email', requireAdmin, async (req, res) => {
+  try {
+    const actor = await adminActor(req);
+    const email = normalizeEmail(req.params.email);
+    const sub = await getSubscriptionByEmail(email);
+    if (!sub) return res.status(404).json({ error: 'Subscriber not found.' });
+    const before = { ...sub };
+    if (req.body.fullName !== undefined) sub.fullName = String(req.body.fullName || '').trim().slice(0, 120);
+    if (req.body.adminNotes !== undefined) sub.adminNotes = sanitizeAdminNotes(req.body.adminNotes);
+    if (req.body.newEmail !== undefined && isValidEmail(req.body.newEmail)) {
+      const nextEmail = normalizeEmail(req.body.newEmail);
+      if (nextEmail !== email) {
+        const conflict = await getSubscriptionByEmail(nextEmail);
+        if (conflict) return res.status(409).json({ error: 'A subscription already exists for that email address.' });
+        await redisCommand('HDEL', 'boardexamtracker:premium:subscriptions', email);
+        sub.email = nextEmail;
+        sub.alertEmail = nextEmail;
+        await addAuditLog({ action: 'admin_subscriber_email_updated', actor, email: nextEmail, details: { oldEmail: email, newEmail: nextEmail } });
+      }
+    }
+    if (req.body.alertEmail !== undefined && isValidEmail(req.body.alertEmail)) sub.alertEmail = normalizeEmail(req.body.alertEmail);
+    if (req.body.startDate) sub.startDate = new Date(req.body.startDate).toISOString();
+    if (req.body.expirationDate) sub.expirationDate = new Date(req.body.expirationDate).toISOString();
+    if (req.body.status) sub.status = String(req.body.status).toLowerCase();
+    if (req.body.userId !== undefined) {
+      const uid = String(req.body.userId || '').trim();
+      if (uid) { const u = await getUserById(uid); if (!u) return res.status(400).json({ error: 'User ID not found.' }); sub.userId = uid; }
+      else sub.userId = null;
+    }
+    if (req.body.connectEmailAccount && isValidEmail(req.body.connectEmailAccount)) {
+      const u = await getUserByEmail(req.body.connectEmailAccount);
+      if (u) sub.userId = u.id;
+    }
+    sub.updatedAt = new Date().toISOString();
+    sub.updatedBy = actor;
+    await saveSubscription(sub);
+    await addAuditLog({ action: 'admin_subscriber_updated', actor, email, details: { beforeStatus: before.status, afterStatus: sub.status } });
+    res.json({ ok: true, subscription: publicSubscription(sub) });
+  } catch (error) {
+    console.error('Admin update subscriber failed:', error.message);
+    res.status(400).json({ error: error.message || 'Could not update subscriber.' });
+  }
+});
+
+async function adminSubscriptionAction(req, res, action) {
+  const actor = await adminActor(req);
+  const email = normalizeEmail(req.params.email);
+  const sub = await getSubscriptionByEmail(email);
+  if (!sub) return res.status(404).json({ error: 'Subscriber not found.' });
+  const now = new Date();
+  if (action === 'activate') {
+    sub.status = 'active';
+    if (!sub.startDate) sub.startDate = now.toISOString();
+    if (!sub.expirationDate || new Date(sub.expirationDate).getTime() <= now.getTime()) sub.expirationDate = addMonthsToDate(now, 1);
+    sub.cancelAtPeriodEnd = false;
+  } else if (action === 'deactivate') {
+    sub.status = 'expired';
+    sub.expirationDate = now.toISOString();
+  } else if (action === 'cancel') {
+    sub.status = 'cancelled';
+    sub.cancelAtPeriodEnd = false;
+    sub.cancelledAt = now.toISOString();
+  } else if (action === 'renew') {
+    const months = parsePositiveInt(req.body?.months, 1);
+    const base = sub.expirationDate && new Date(sub.expirationDate).getTime() > now.getTime() ? new Date(sub.expirationDate) : now;
+    if (!sub.startDate) sub.startDate = now.toISOString();
+    sub.expirationDate = addMonthsToDate(base, months);
+    sub.status = 'active';
+    sub.cancelAtPeriodEnd = false;
+  } else if (action === 'extend') {
+    const months = parsePositiveInt(req.body?.months, 1);
+    const base = sub.expirationDate ? new Date(sub.expirationDate) : now;
+    sub.expirationDate = addMonthsToDate(base, months);
+    if (sub.status !== 'cancelled') sub.status = 'active';
+  } else if (action === 'set-expiration') {
+    const exp = req.body?.expirationDate ? new Date(req.body.expirationDate) : null;
+    if (!exp || Number.isNaN(exp.getTime())) return res.status(400).json({ error: 'Valid expirationDate is required.' });
+    sub.expirationDate = exp.toISOString();
+    sub.status = exp.getTime() > now.getTime() ? 'active' : 'expired';
+  } else if (action === 'mark-complimentary') {
+    sub.complimentary = true;
+    sub.status = 'active';
+    if (!sub.startDate) sub.startDate = now.toISOString();
+    if (!sub.expirationDate || new Date(sub.expirationDate).getTime() <= now.getTime()) sub.expirationDate = addMonthsToDate(now, parsePositiveInt(req.body?.months, 1));
+  } else {
+    return res.status(400).json({ error: 'Unknown action.' });
+  }
+  sub.updatedAt = now.toISOString();
+  sub.updatedBy = actor;
+  await saveSubscription(sub);
+  await addAuditLog({ action: `admin_subscriber_${action.replace(/-/g, '_')}`, actor, email, details: { status: sub.status, expirationDate: sub.expirationDate, months: req.body?.months || null } });
+  if (['active', 'pending'].includes(sub.status) && effectiveStatus(sub) === 'active') {
+    sendSubscriptionActivatedEmail(sub).catch(() => {});
+  }
+  return res.json({ ok: true, subscription: publicSubscription(sub) });
+}
+
+for (const [route, action] of [
+  ['/api/admin/premium/subscribers/:email/activate', 'activate'],
+  ['/api/admin/premium/subscribers/:email/deactivate', 'deactivate'],
+  ['/api/admin/premium/subscribers/:email/cancel', 'cancel'],
+  ['/api/admin/premium/subscribers/:email/renew', 'renew'],
+  ['/api/admin/premium/subscribers/:email/extend', 'extend'],
+  ['/api/admin/premium/subscribers/:email/set-expiration', 'set-expiration'],
+  ['/api/admin/premium/subscribers/:email/complimentary', 'mark-complimentary'],
+]) {
+  app.post(route, requireAdmin, (req, res) => adminSubscriptionAction(req, res, action).catch((error) => {
+    console.error('Admin subscriber action failed:', error.message);
+    res.status(500).json({ error: 'Could not update subscriber.' });
+  }));
+}
+
+app.post('/api/admin/premium/subscribers/:email/mark-paid', requireAdmin, async (req, res) => {
+  try {
+    const actor = await adminActor(req);
+    const email = normalizeEmail(req.params.email);
+    const sub = await getSubscriptionByEmail(email);
+    if (!sub) return res.status(404).json({ error: 'Subscriber not found.' });
+    const months = parsePositiveInt(req.body?.months, 1);
+    const amount = Number(req.body?.amountPaid ?? req.body?.amount ?? (months * 20));
+    const method = String(req.body?.paymentMethod || 'Other').trim();
+    const reference = String(req.body?.paymentReference || `MANUAL-${Date.now()}`).trim();
+    const payment = await createPayment({ email, userId: sub.userId || null, amount, currency: 'PHP', method, reference, status: 'paid', months, actor, notes: sanitizeAdminNotes(req.body?.adminNotes), metadata: { source: 'admin_mark_paid' } });
+    await activateSubscription({ email, fullName: sub.fullName, userId: sub.userId || null, months, amount, method, reference, actor, paymentId: payment.id, complimentary: false });
+    await addAuditLog({ action: 'admin_payment_marked_paid', actor, email, details: { paymentId: payment.id, amount, months, method, reference } });
+    res.json({ ok: true, payment });
+  } catch (error) {
+    console.error('Admin mark paid failed:', error.message);
+    res.status(400).json({ error: error.message || 'Could not mark payment as paid.' });
+  }
+});
+
+app.get('/api/admin/premium/subscribers/:email/payments', requireAdmin, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.params.email);
+    const payments = await listPaymentsByEmail(email);
+    res.json({ payments });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not load payment history.' });
+  }
+});
+
+app.get('/api/admin/premium/email-log', requireAdmin, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.query.email || '');
+    const logs = await listEmailLogs(500);
+    res.json({ logs: email ? logs.filter((l) => normalizeEmail(l.email) === email) : logs.slice(0, 200) });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not load email log.' });
+  }
+});
+
+app.get('/api/admin/premium/audit', requireAdmin, async (_req, res) => {
+  try {
+    const logs = await listAuditLogs(300);
+    res.json({ logs });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not load audit log.' });
+  }
+});
+
+app.get('/api/admin/premium/export.csv', requireAdmin, async (_req, res) => {
+  try {
+    const subscribers = await buildAdminSubscriberView();
+    const header = ['Name','Email','User ID','Payment Method','Amount Paid','Payment Status','Subscription Status','Start Date','Expiration Date','Email Alert Status','Payment Reference','Admin Notes'];
+    const rows = subscribers.map((s) => [s.fullName, s.email, s.userId || '', s.paymentMethod, s.amountPaid, s.paymentStatus, s.status, s.startDate || '', s.expirationDate || '', s.status === 'active' ? 'enabled' : 'disabled', s.paymentReference || '', s.adminNotes || '']);
+    const csv = [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="premium-subscribers.csv"');
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ error: 'Could not export subscribers.' });
+  }
+});
+
+app.get('/api/admin/premium/config', requireAdmin, async (_req, res) => {
+  try {
+    const config = await getConfig();
+    res.json({ config, ganapConfigured: ganapConfig().configured });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not load config.' });
+  }
+});
+
+app.put('/api/admin/premium/config', requireAdmin, async (req, res) => {
+  try {
+    const actor = await adminActor(req);
+    const current = await getConfig();
+    const next = {
+      ...current,
+      ganapEnabled: req.body?.ganapEnabled !== undefined ? Boolean(req.body.ganapEnabled) : current.ganapEnabled,
+      alternativeMethods: Array.isArray(req.body?.alternativeMethods) ? req.body.alternativeMethods.map((v) => String(v).trim()).filter(Boolean).slice(0, 20) : current.alternativeMethods,
+      prepaidOptions: Array.isArray(req.body?.prepaidOptions) ? req.body.prepaidOptions.map((o) => ({ label: String(o.label || '').trim().slice(0, 120), months: parsePositiveInt(o.months, 1), amount: Number(o.amount) || 0 })).filter((o) => o.label && o.amount > 0) : current.prepaidOptions,
+    };
+    await saveConfig(next);
+    await addAuditLog({ action: 'admin_premium_config_updated', actor, email: null, details: { ganapEnabled: next.ganapEnabled, prepaidOptions: next.prepaidOptions.length } });
+    res.json({ ok: true, config: next });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Could not save config.' });
+  }
+});
+
+
 app.get('/ads.txt', (_req, res) => {
   const clientId = process.env.ADSENSE_CLIENT_ID || '';
   if (!/^ca-pub-\d+$/.test(clientId)) return res.status(404).type('text/plain').send('');
@@ -1293,25 +2086,8 @@ function createResultCardSvg(item) {
 }
 
 async function notifySubscribers(results) {
-  const subscribers = await listConfirmedSubscribers();
-  if (!subscribers.length) return { recipients: 0, failed: 0 };
-  const failureStatuses = {};
-  let failures = 0;
-  for (const [index, subscriber] of subscribers.entries()) {
-    try {
-      await sendUndeliveredResultAlert(subscriber, results, {
-        redisCommand,
-        send: (target, items, options) => sendResultAlert(target, items, options),
-      });
-    } catch (lastError) {
-      failures += 1;
-      const status = /^Email provider returned (\d{3}):/.exec(lastError?.message || '')?.[1] || 'network';
-      failureStatuses[status] = (failureStatuses[status] || 0) + 1;
-    }
-    if (index < subscribers.length - 1) await new Promise((resolve) => setTimeout(resolve, 350));
-  }
-  if (failures) console.error(`Email delivery failed for ${failures} subscriber(s): ${JSON.stringify(failureStatuses)}.`);
-  return { recipients: subscribers.length, failed: failures, failureStatuses };
+  await expireDueSubscriptions().catch((error) => console.warn('Could not expire subscriptions before alert dispatch:', error.message));
+  return notifyPremiumSubscribers(results);
 }
 
 async function sendResultAlert(subscriber, results, { resend = false, idempotencyKey } = {}) {
@@ -1353,11 +2129,15 @@ function allowEmailAttempt(req) {
   return true;
 }
 
-app.get('/api/notifications/status', (_req, res) => {
+app.get('/api/notifications/status', async (_req, res) => {
   const emailReady = isEmailConfigured();
   const persistentStorageReady = isPersistentStorageConfigured();
+  const config = await getConfig().catch(() => null);
   res.json({
     available: emailReady && persistentStorageReady,
+    premium: true,
+    planName: config?.planName || 'Premium Email Alerts',
+    monthlyPrice: config?.monthlyPrice || 20,
     reason: !emailReady ? 'email' : !persistentStorageReady ? 'storage' : null,
   });
 });
@@ -1562,32 +2342,14 @@ app.post('/api/admin/results-check', requireAdmin, async (_req, res) => {
 
 app.post('/api/notifications/subscribe', async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  if (!/^[-!#$%&'*+/0-9=?A-Z^_`{|}~.]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i.test(email) || email.length > 254) {
+  if (email && !isValidEmail(email)) {
     return res.status(400).json({ error: 'Enter a valid email address.' });
   }
-  if (!allowEmailAttempt(req)) return res.status(429).json({ error: 'Too many signup attempts. Please try again later.' });
-  if (!isEmailConfigured()) return res.status(503).json({ error: 'Email alerts are not configured on this server yet.' });
-
-  try {
-    if (!isPersistentStorageConfigured()) {
-      return res.status(503).json({ error: 'Email alerts require Upstash Redis REST credentials for subscriber storage.' });
-    }
-    const subscription = await addPendingSubscriber(email);
-    if (subscription.status === 'subscribed') return res.json({ message: 'This email is already subscribed to result alerts.' });
-    if (subscription.status === 'pending') return res.json({ message: 'Check your inbox for the confirmation email.' });
-    const confirmationUrl = `${publicBaseUrl()}/api/email/confirm?token=${encodeURIComponent(subscription.token)}`;
-    await sendEmail({
-      to: email,
-      subject: 'Confirm your BoardExamTracker email alerts',
-      html: `<div style="font-family:Arial,sans-serif;color:#172b46;line-height:1.6"><h1 style="font-size:22px">Confirm your email alerts</h1><p>Click below to confirm you want to receive email when new PRC exam result announcements are found.</p><p><a href="${escapeEmailHtml(confirmationUrl)}" style="display:inline-block;padding:12px 18px;border-radius:8px;background:#2563a9;color:white;text-decoration:none;font-weight:bold">Confirm email alerts</a></p><p>If you did not request these alerts, you can ignore this email.</p></div>`,
-      text: `Confirm email alerts for BoardExamTracker by opening: ${confirmationUrl}\n\nIf you did not request these alerts, ignore this email.`,
-    });
-    await markConfirmationSent(subscription.token);
-    return res.json({ message: 'Check your inbox for a confirmation email to activate alerts.' });
-  } catch (error) {
-    console.error('Could not process email alert signup:', error.message);
-    return res.status(502).json({ error: 'We could not send the confirmation email. Please try again later.' });
-  }
+  return res.status(400).json({
+    error: 'Free email alerts are no longer available. Subscribe to Premium Email Alerts for ₱20/month to receive email notifications when new board exam results are published.',
+    premium: true,
+    redirect: '/account',
+  });
 });
 
 app.get('/api/email/confirm', (req, res) => {

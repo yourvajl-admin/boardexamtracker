@@ -7,6 +7,15 @@ const subscriberEmpty = document.querySelector('#subscriber-empty');
 const searchInput = document.querySelector('#subscriber-search');
 const subscriberSort = document.querySelector('#subscriber-sort');
 const subscriberPagination = document.querySelector('#subscriber-pagination');
+const subscriberStatusFilter = document.querySelector('#subscriber-status-filter');
+const premiumStats = document.querySelector('#premium-stats');
+const premiumSubscriberForm = document.querySelector('#premium-subscriber-form');
+const premiumExport = document.querySelector('#premium-export');
+const premiumRefresh = document.querySelector('#premium-refresh');
+const premiumLoadAudit = document.querySelector('#premium-load-audit');
+const premiumLoadEmailLog = document.querySelector('#premium-load-email-log');
+const premiumLogOutput = document.querySelector('#premium-log-output');
+const psStatus = document.querySelector('#ps-status');
 const themeToggle = document.querySelector('#theme-toggle');
 const latestAlertForm = document.querySelector('#latest-alert-form');
 const latestAlertStatus = document.querySelector('#latest-alert-status');
@@ -73,54 +82,87 @@ function setDashboardStatus(message, type = '') {
   dashboardStatus.hidden = !message;
 }
 
+let premiumStatsData = {};
+
+function fmtDate(v){ if(!v) return '—'; const d=new Date(v); return Number.isNaN(d.getTime())?String(v):d.toLocaleDateString(); }
+function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+function renderPremiumStats() {
+  if (!premiumStats) return;
+  const s = premiumStatsData || {};
+  const cards = [
+    ['Total Subscribers', s.totalSubscribers ?? 0],
+    ['Active Premium', s.activePremiumSubscribers ?? 0],
+    ['Expired', s.expiredSubscribers ?? 0],
+    ['Pending Payments', s.pendingPayments ?? 0],
+    ['Complimentary', s.complimentarySubscribers ?? 0],
+    ['Revenue', `₱${Number(s.subscriptionRevenue||0).toLocaleString()}`],
+    ['Email Alerts Sent', s.totalEmailAlertsSent ?? 0],
+  ];
+  premiumStats.innerHTML = cards.map(([k,v])=>`<div style="background:#f6f9fc;border-radius:10px;padding:10px"><div style="font-size:12px;color:#5b6b7f">${esc(k)}</div><div style="font-size:20px;font-weight:700">${esc(v)}</div></div>`).join('');
+}
+
+function filteredSubscribers() {
+  const query = (searchInput?.value || '').trim().toLowerCase();
+  const status = subscriberStatusFilter?.value || 'all';
+  return subscribers.filter((s) => {
+    const hay = `${s.fullName||''} ${s.email||''}`.toLowerCase();
+    if (query && !hay.includes(query)) return false;
+    if (status !== 'all' && s.status !== status) return false;
+    return true;
+  }).sort((a,b) => {
+    if (subscriberSort?.value === 'oldest') return String(a.createdAt||a.startDate||'').localeCompare(String(b.createdAt||b.startDate||''));
+    if (subscriberSort?.value === 'expiring') return String(a.expirationDate||'9999').localeCompare(String(b.expirationDate||'9999'));
+    return String(b.createdAt||b.startDate||'').localeCompare(String(a.createdAt||a.startDate||''));
+  });
+}
+
 function renderSubscribers() {
-  const query = searchInput.value.trim().toLowerCase();
-  const visible = subscribers
-    .filter((subscriber) => subscriber.email.toLowerCase().includes(query))
-    .sort((a, b) => {
-      const aCreatedAt = Number(a.createdAt ?? a.confirmedAt ?? 0);
-      const bCreatedAt = Number(b.createdAt ?? b.confirmedAt ?? 0);
-      const byDate = subscriberSort.value === 'newest' ? bCreatedAt - aCreatedAt : aCreatedAt - bCreatedAt;
-      return byDate || a.email.localeCompare(b.email);
-    });
+  renderPremiumStats();
+  const visible = filteredSubscribers();
   const pageCount = Math.ceil(visible.length / SUBSCRIBERS_PER_PAGE);
   subscriberPage = Math.max(1, Math.min(subscriberPage, pageCount || 1));
   const start = (subscriberPage - 1) * SUBSCRIBERS_PER_PAGE;
   const pageSubscribers = visible.slice(start, start + SUBSCRIBERS_PER_PAGE);
   subscriberRows.replaceChildren();
-  for (const subscriber of pageSubscribers) {
+  for (const s of pageSubscribers) {
     const row = document.createElement('tr');
-    const emailCell = document.createElement('td');
-    const statusCell = document.createElement('td');
-    const actionCell = document.createElement('td');
+    const alertStatus = s.status === 'active' ? 'Enabled' : 'Disabled';
+    row.innerHTML = `
+      <td>${esc(s.fullName || '—')}</td>
+      <td><div>${esc(s.email)}</div><div style="font-size:12px;color:#64748b">${s.userId ? 'User: '+esc(s.userId) : 'No linked account'}</div></td>
+      <td>${esc(s.paymentMethod || '—')}</td>
+      <td>₱${Number(s.amountPaid||0).toLocaleString()}</td>
+      <td>${esc(s.paymentStatus || '—')}</td>
+      <td><span class="badge ${esc(s.status)}">${esc(s.status)}</span></td>
+      <td>${esc(fmtDate(s.startDate))}</td>
+      <td>${esc(fmtDate(s.expirationDate))}</td>
+      <td>${alertStatus}</td>
+      <td></td>`;
+    const actionCell = row.lastElementChild;
     const actions = document.createElement('div');
-    actions.className = 'subscriber-actions';
-    const resendButton = document.createElement('button');
-    const button = document.createElement('button');
-    emailCell.textContent = subscriber.email;
-    statusCell.textContent = subscriber.status;
-    resendButton.className = 'resend-button';
-    resendButton.type = 'button';
-    resendButton.textContent = 'Resend alert';
-    resendButton.disabled = subscriber.status !== 'Confirmed';
-    resendButton.title = resendButton.disabled ? 'Only confirmed subscribers can receive alerts.' : `Send the latest result alert to ${subscriber.email}`;
-    resendButton.setAttribute('aria-label', `Resend latest result alert to ${subscriber.email}`);
-    resendButton.addEventListener('click', () => resendSubscriberAlert(subscriber.email, resendButton));
-    button.className = 'unsubscribe-button';
-    button.type = 'button';
-    button.textContent = 'Unsubscribe';
-    button.setAttribute('aria-label', `Unsubscribe ${subscriber.email}`);
-    button.addEventListener('click', () => unsubscribeSubscriber(subscriber.email, button));
-    actions.append(resendButton, button);
+    actions.style.display = 'flex'; actions.style.flexWrap = 'wrap'; actions.style.gap = '4px';
+    const addBtn = (label, fn, cls='secondary-button') => { const b=document.createElement('button'); b.type='button'; b.className=cls; b.textContent=label; b.style.fontSize='12px'; b.style.padding='4px 8px'; b.addEventListener('click', fn); actions.append(b); };
+    addBtn('Edit', () => fillSubscriberForm(s));
+    addBtn('Activate', () => subscriberAction(s.email,'activate'));
+    addBtn('Deactivate', () => subscriberAction(s.email,'deactivate'));
+    addBtn('Renew 1m', () => subscriberAction(s.email,'renew',{months:1}));
+    addBtn('Extend 1m', () => subscriberAction(s.email,'extend',{months:1}));
+    addBtn('Set expiry', () => { const v=prompt('Expiration date (YYYY-MM-DD):', (s.expirationDate||'').slice(0,10)); if(v) subscriberAction(s.email,'set-expiration',{expirationDate:new Date(v).toISOString()}); });
+    addBtn('Connect account', () => { const userId=prompt('Website Account/User ID to connect (leave blank to unlink):', s.userId||''); if(userId===null) return; request(`/api/admin/premium/subscribers/${encodeURIComponent(s.email)}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:userId.trim()})}).then(()=>{setDashboardStatus(`Account connection updated for ${s.email}.`,'good'); loadSubscribers();}).catch((e)=>setDashboardStatus(e.message,'bad')); });
+    addBtn('Update email', () => { const newEmail=prompt('New email address:', s.email); if(!newEmail || newEmail===s.email) return; request(`/api/admin/premium/subscribers/${encodeURIComponent(s.email)}`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({newEmail:newEmail.trim().toLowerCase()})}).then(()=>{setDashboardStatus(`Email updated for ${s.email}.`,'good'); loadSubscribers();}).catch((e)=>setDashboardStatus(e.message,'bad')); });
+    addBtn('Mark paid', () => { const amount=prompt('Amount paid:', String(s.amountPaid||20)); if(amount===null) return; const method=prompt('Payment method (Ganap/GCash/Bank Transfer/Cash/Other/Complimentary):', s.paymentMethod||'GCash'); if(method===null) return; const ref=prompt('Payment reference:', s.paymentReference||''); subscriberAction(s.email,'mark-paid',{amountPaid:Number(amount),paymentMethod:method,paymentReference:ref||'',months:1}); });
+    addBtn('Complimentary', () => subscriberAction(s.email,'complimentary',{months:1}));
+    addBtn('Cancel', () => { if(confirm(`Cancel subscription for ${s.email}?`)) subscriberAction(s.email,'cancel'); }, 'unsubscribe-button');
+    addBtn('Payments', () => viewSubscriberPayments(s.email));
+    addBtn('Email log', () => viewSubscriberEmailLog(s.email));
     actionCell.append(actions);
-    row.append(emailCell, statusCell, actionCell);
     subscriberRows.append(row);
   }
   document.querySelector('#subscriber-count').textContent = visible.length
     ? `Showing ${start + 1}–${Math.min(start + SUBSCRIBERS_PER_PAGE, visible.length)} of ${visible.length} matching · ${subscribers.length} total`
     : `0 matching · ${subscribers.length} total`;
   subscriberEmpty.hidden = visible.length !== 0;
-  subscriberEmpty.textContent = subscribers.length ? 'No subscriber emails match this search.' : 'No subscribers yet.';
   renderSubscriberPagination(pageCount);
 }
 
@@ -128,84 +170,141 @@ function renderSubscriberPagination(pageCount) {
   subscriberPagination.replaceChildren();
   subscriberPagination.hidden = pageCount <= 1;
   if (pageCount <= 1) return;
-
   const addPageButton = (label, page, { current = false, disabled = false } = {}) => {
     const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'page-button';
-    button.textContent = label;
-    button.disabled = disabled;
+    button.type = 'button'; button.className = 'page-button'; button.textContent = label; button.disabled = disabled;
     if (current) button.setAttribute('aria-current', 'page');
-    if (/^\d+$/.test(label)) button.setAttribute('aria-label', `Page ${label}`);
-    button.addEventListener('click', () => {
-      subscriberPage = page;
-      renderSubscribers();
-    });
+    button.addEventListener('click', () => { subscriberPage = page; renderSubscribers(); });
     subscriberPagination.append(button);
   };
-
   addPageButton('Previous', subscriberPage - 1, { disabled: subscriberPage === 1 });
-  const pages = pageCount <= 5
-    ? Array.from({ length: pageCount }, (_, index) => index + 1)
-    : subscriberPage <= 3
-      ? [1, 2, 3, '…', pageCount]
-      : subscriberPage >= pageCount - 2
-        ? [1, '…', pageCount - 2, pageCount - 1, pageCount]
-        : [1, '…', subscriberPage - 1, subscriberPage, subscriberPage + 1, '…', pageCount];
-  for (const page of pages) {
-    if (page === '…') {
-      const ellipsis = document.createElement('span');
-      ellipsis.className = 'page-ellipsis';
-      ellipsis.textContent = page;
-      subscriberPagination.append(ellipsis);
-    } else {
-      addPageButton(String(page), page, { current: page === subscriberPage });
-    }
-  }
+  for (let p=1; p<=pageCount; p++) addPageButton(String(p), p, { current: p===subscriberPage });
   addPageButton('Next', subscriberPage + 1, { disabled: subscriberPage === pageCount });
 }
 
-async function resendSubscriberAlert(email, button) {
-  if (!window.confirm(`Resend the latest board exam result alert to ${email}?`)) return;
-  button.disabled = true;
-  button.textContent = 'Sending…';
+function fillSubscriberForm(s) {
+  document.querySelector('#ps-mode').value = 'edit';
+  document.querySelector('#ps-fullName').value = s.fullName || '';
+  document.querySelector('#ps-email').value = s.email || '';
+  document.querySelector('#ps-email').readOnly = true;
+  document.querySelector('#ps-userId').value = s.userId || '';
+  document.querySelector('#ps-startDate').value = (s.startDate||'').slice(0,10);
+  document.querySelector('#ps-expirationDate').value = (s.expirationDate||'').slice(0,10);
+  document.querySelector('#ps-amountPaid').value = s.amountPaid ?? 20;
+  document.querySelector('#ps-paymentMethod').value = s.paymentMethod || 'Ganap';
+  document.querySelector('#ps-paymentReference').value = s.paymentReference || '';
+  document.querySelector('#ps-paymentStatus').value = s.paymentStatus || 'Paid';
+  document.querySelector('#ps-subscriptionStatus').value = s.status || 'active';
+  document.querySelector('#ps-adminNotes').value = s.adminNotes || '';
+  psStatus.textContent = `Editing ${s.email}`;
+  psStatus.className = 'status';
+}
+
+function resetSubscriberForm() {
+  premiumSubscriberForm?.reset();
+  document.querySelector('#ps-mode').value = 'add';
+  document.querySelector('#ps-email').readOnly = false;
+  document.querySelector('#ps-durationMonths').value = 1;
+  document.querySelector('#ps-amountPaid').value = 20;
+  psStatus.textContent = '';
+  psStatus.className = 'status';
+}
+
+async function subscriberAction(email, action, body={}) {
   try {
-    const data = await request('/api/admin/subscribers/resend-alert', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    button.textContent = 'Sent · wait 1 min';
-    setDashboardStatus(`Latest result alert sent to ${email}: ${data.title}`, 'good');
-    window.setTimeout(() => {
-      if (!button.isConnected) return;
-      button.disabled = false;
-      button.textContent = 'Resend alert';
-    }, 60_000);
+    await request(`/api/admin/premium/subscribers/${encodeURIComponent(email)}/${action}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    setDashboardStatus(`Subscriber ${email}: ${action} completed.`, 'good');
+    await loadSubscribers();
   } catch (error) {
-    button.disabled = false;
-    button.textContent = 'Resend alert';
     setDashboardStatus(error.message, 'bad');
   }
 }
 
-async function unsubscribeSubscriber(email, button) {
-  if (!window.confirm(`Remove ${email} from BoardExamTracker email alerts?`)) return;
-  button.disabled = true;
+async function viewSubscriberPayments(email) {
   try {
-    await request('/api/admin/subscribers/unsubscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
-    subscribers = subscribers.filter((subscriber) => subscriber.email !== email);
-    renderSubscribers();
-    setDashboardStatus(`${email} has been unsubscribed.`, 'good');
-  } catch (error) {
-    button.disabled = false;
-    setDashboardStatus(error.message, 'bad');
-  }
+    const data = await request(`/api/admin/premium/subscribers/${encodeURIComponent(email)}/payments`);
+    premiumLogOutput.textContent = JSON.stringify(data.payments || [], null, 2);
+    setDashboardStatus(`Loaded payment history for ${email}.`, 'good');
+  } catch (error) { setDashboardStatus(error.message, 'bad'); }
 }
+
+async function viewSubscriberEmailLog(email) {
+  try {
+    const data = await request(`/api/admin/premium/email-log?email=${encodeURIComponent(email)}`);
+    premiumLogOutput.textContent = JSON.stringify(data.logs || [], null, 2);
+    setDashboardStatus(`Loaded email log for ${email}.`, 'good');
+  } catch (error) { setDashboardStatus(error.message, 'bad'); }
+}
+
+async function loadSubscribers() {
+  const data = await request('/api/admin/premium/subscribers');
+  subscribers = (data.subscribers || []).map((s) => ({ ...s, createdAt: s.createdAt || s.startDate || null }));
+  premiumStatsData = data.stats || {};
+  renderSubscribers();
+}
+
+premiumSubscriberForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  psStatus.textContent = 'Saving...'; psStatus.className = 'status';
+  const mode = document.querySelector('#ps-mode').value;
+  const email = document.querySelector('#ps-email').value.trim().toLowerCase();
+  const payload = {
+    fullName: document.querySelector('#ps-fullName').value.trim(),
+    email,
+    userId: document.querySelector('#ps-userId').value.trim(),
+    startDate: document.querySelector('#ps-startDate').value ? new Date(document.querySelector('#ps-startDate').value).toISOString() : undefined,
+    durationMonths: Number(document.querySelector('#ps-durationMonths').value || 1),
+    expirationDate: document.querySelector('#ps-expirationDate').value ? new Date(document.querySelector('#ps-expirationDate').value).toISOString() : undefined,
+    amountPaid: Number(document.querySelector('#ps-amountPaid').value || 0),
+    paymentMethod: document.querySelector('#ps-paymentMethod').value,
+    paymentReference: document.querySelector('#ps-paymentReference').value.trim(),
+    paymentStatus: document.querySelector('#ps-paymentStatus').value,
+    subscriptionStatus: document.querySelector('#ps-subscriptionStatus').value,
+    adminNotes: document.querySelector('#ps-adminNotes').value.trim(),
+  };
+  try {
+    if (mode === 'edit') {
+      await request(`/api/admin/premium/subscribers/${encodeURIComponent(email)}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      psStatus.textContent = 'Subscriber updated.'; psStatus.className = 'status good';
+    } else {
+      await request('/api/admin/premium/subscribers', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      psStatus.textContent = 'Subscriber saved.'; psStatus.className = 'status good';
+      resetSubscriberForm();
+    }
+    await loadSubscribers();
+  } catch (error) {
+    psStatus.textContent = error.message; psStatus.className = 'status bad';
+  }
+});
+document.querySelector('#ps-reset')?.addEventListener('click', resetSubscriberForm);
+subscriberStatusFilter?.addEventListener('change', () => { subscriberPage = 1; renderSubscribers(); });
+premiumExport?.addEventListener('click', () => { window.location.href = '/api/admin/premium/export.csv'; });
+premiumRefresh?.addEventListener('click', () => loadSubscribers().catch((e)=>setDashboardStatus(e.message,'bad')));
+premiumLoadAudit?.addEventListener('click', async () => { try { const d = await request('/api/admin/premium/audit'); premiumLogOutput.textContent = JSON.stringify(d.logs||[], null, 2); } catch(e){ setDashboardStatus(e.message,'bad'); } });
+premiumLoadEmailLog?.addEventListener('click', async () => { try { const d = await request('/api/admin/premium/email-log'); premiumLogOutput.textContent = JSON.stringify(d.logs||[], null, 2); } catch(e){ setDashboardStatus(e.message,'bad'); } });
+
+async function loadPremiumConfig() {
+  try {
+    const data = await request('/api/admin/premium/config');
+    const c = data.config || {};
+    document.querySelector('#premium-ganap-enabled').checked = Boolean(c.ganapEnabled);
+    document.querySelector('#premium-prepaid-options').value = (c.prepaidOptions || []).map((o) => `${o.label} | ${o.months} | ${o.amount}`).join('\n');
+    document.querySelector('#premium-alt-methods').value = (c.alternativeMethods || []).join(', ');
+  } catch (e) { /* ignore */ }
+}
+document.querySelector('#premium-config-save')?.addEventListener('click', async () => {
+  const status = document.querySelector('#premium-config-status');
+  status.textContent = 'Saving...'; status.className = 'status';
+  try {
+    const prepaidOptions = document.querySelector('#premium-prepaid-options').value.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const [label, months, amount] = line.split('|').map((s) => s.trim());
+      return { label, months: Number(months), amount: Number(amount) };
+    }).filter((o) => o.label && o.months > 0 && o.amount > 0);
+    const alternativeMethods = document.querySelector('#premium-alt-methods').value.split(',').map((s) => s.trim()).filter(Boolean);
+    await request('/api/admin/premium/config', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ganapEnabled: document.querySelector('#premium-ganap-enabled').checked, prepaidOptions, alternativeMethods }) });
+    status.textContent = 'Saved.'; status.className = 'status good';
+  } catch (e) { status.textContent = e.message; status.className = 'status bad'; }
+});
 
 async function refreshViewerCount() {
   const count = document.querySelector('#viewer-count');
@@ -613,18 +712,11 @@ adsToggleButton.addEventListener('click', async () => {
 
 async function loadDashboard() {
   showView('dashboard-view');
-  setDashboardStatus('Loading subscriber addresses…');
+  setDashboardStatus('Loading premium subscribers…');
   try {
-    const data = await request('/api/admin/subscribers');
-    subscribers = data.subscribers;
-    renderSubscribers();
-    if (!data.persistentStorage && data.production) {
-      setDashboardStatus('Persistent subscriber storage is not connected. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel to reliably store and manage subscribers.', 'bad');
-    } else if (data.migration?.imported > 0) {
-      setDashboardStatus(`Restored ${data.migration.imported} subscriber${data.migration.imported === 1 ? '' : 's'} from the previous Redis database. The original records were kept, and no emails were sent.`, 'good');
-    } else {
-      setDashboardStatus('Only admins can see this list. A manual unsubscribe removes the address from future alerts.', 'good');
-    }
+    await loadSubscribers();
+    await loadPremiumConfig();
+    setDashboardStatus('Manage Premium Email Alerts subscribers here. Board exam results remain free for everyone.', 'good');
     await loadAdsControl();
     await loadDonationSettings();
     await refreshViewerCount();
