@@ -43,15 +43,29 @@
   function renderCheckoutOptions() {
     const opts = [];
     const ganap = config?.ganap;
+    opts.push({
+      value: 'monthly:1',
+      label: 'Monthly subscription — ₱20/month',
+      months: 1,
+      method: 'Manual',
+      amount: 20,
+      disclosure: 'Premium Email Alerts is ₱20 per month. After you submit, your payment request will be recorded as pending until an admin confirms your payment.',
+    });
     if (ganap?.enabled) {
-      opts.push({ value: 'ganap:10', label: 'Ganap.net prepaid — ₱200 for 10 months (₱20/month equivalent)', months: 10, method: 'Ganap', amount: 200, disclosure: 'Ganap requires a minimum ₱200 charge. This prepaid option gives you 10 months of Premium Email Alerts, preserving the ₱20/month equivalent. You will be charged ₱200 now.' });
-    }
-    for (const p of (config?.prepaidOptions || [])) {
-      if (ganap?.enabled && Number(p.amount) === 200 && Number(p.months) === 10) continue;
-      opts.push({ value: `prepaid:${p.months}:${p.amount}:${p.label}`, label: `${p.label} — ${fmtMoney(p.amount)}`, months: p.months, method: 'Other', amount: p.amount, disclosure: `Prepaid option: ${p.label}. You pay ${fmtMoney(p.amount)} for ${p.months} month(s), preserving the ₱20/month equivalent. An admin will confirm the payment after you complete it.` });
-    }
-    if (!opts.length) {
-      opts.push({ value: 'manual:1', label: 'Manual payment — ₱20 for 1 month (admin confirmation required)', months: 1, method: 'GCash', amount: 20, disclosure: 'Direct online checkout is currently unavailable. Your request will be recorded and an admin can confirm your payment after you pay ₱20 via an available method.' });
+      for (const p of (config?.prepaidOptions || [])) {
+        const months = Number(p.months);
+        const amount = Number(p.amount);
+        if (!Number.isInteger(months) || months < 1) continue;
+        if (!Number.isFinite(amount) || amount < Number(ganap.minimumAmount || 200)) continue;
+        opts.push({
+          value: `ganap:${months}:${amount}:${p.label}`,
+          label: `${p.label} — ${fmtMoney(amount)}`,
+          months,
+          method: 'Ganap',
+          amount,
+          disclosure: `Ganap requires a minimum ₱${Number(ganap.minimumAmount || 200)} charge. This option charges ${fmtMoney(amount)} for ${months} month(s) at the ₱20/month equivalent. You will confirm payment through Ganap.`,
+        });
+      }
     }
     checkoutOption.innerHTML = opts.map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
     checkoutOption._opts = opts;

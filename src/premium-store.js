@@ -90,7 +90,7 @@ function normalizeConfig(config = {}) {
   const alternativeMethods = Array.isArray(config.alternativeMethods) && config.alternativeMethods.length
     ? config.alternativeMethods.map((method) => String(method || '').trim()).filter(Boolean).slice(0, 20)
     : ['GCash Manual', 'Bank Transfer', 'Cash', 'Other'];
-  const prepaidOptions = Array.isArray(config.prepaidOptions) && config.prepaidOptions.length
+  const prepaidOptions = Array.isArray(config.prepaidOptions)
     ? config.prepaidOptions.flatMap((option) => {
         const months = Number(option?.months);
         const amount = Number(option?.amount);
@@ -99,7 +99,7 @@ function normalizeConfig(config = {}) {
         if (!Number.isFinite(amount) || amount <= 0) return [];
         return [{ months, amount, label: label || `${months} month${months === 1 ? '' : 's'} - ₱${amount}` }];
       }).slice(0, 10)
-    : [{ months: 10, amount: 200, label: '10 months - ₱200 (₱20/month equivalent)' }];
+    : [];
   return {
     ganapEnabled,
     ganapMinimumAmount: 200,
