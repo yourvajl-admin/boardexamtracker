@@ -413,18 +413,55 @@ if (isResultsPage) {
   renderProfessionFilter(state.professions);
 }
 
-if (emailAlertAvailability) {
-  fetch('/api/premium/config', { headers: { Accept: 'application/json' } })
+if (emailAlertForm) {
+  fetch('/api/notifications/status', { headers: { Accept: 'application/json' } })
     .then((response) => response.json())
     .then((data) => {
-      const ganapReady = Boolean(data?.ganap?.enabled);
-      emailAlertAvailability.textContent = ganapReady
-        ? 'Premium Email Alerts are available. Results stay free for everyone.'
-        : 'Premium Email Alerts are available. Payment options may include prepaid or admin-assisted methods when direct checkout is unavailable.';
+      emailAlertsEnabled = Boolean(data.available);
+      emailAlertButton.disabled = !emailAlertsEnabled;
+      emailAlertAvailability.textContent = data.available
+        ? 'You’ll receive a confirmation email before alerts begin. Unsubscribe from any alert email.'
+        : data.reason === 'storage'
+          ? 'Email alerts are temporarily unavailable while secure subscriber storage is being configured.'
+          : 'Email alerts are not configured on this server yet.';
     })
     .catch(() => {
-      emailAlertAvailability.textContent = 'Board exam results remain free for everyone. Subscribe for email alerts when new results are released.';
+      emailAlertsEnabled = false;
+      emailAlertButton.disabled = true;
+      emailAlertAvailability.textContent = 'Email alert availability could not be checked. Please try again later.';
     });
+  emailAlertForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const buttonText = emailAlertButton.innerHTML;
+    emailAlertButton.disabled = true;
+    emailAlertButton.textContent = 'Sending confirmation…';
+    emailAlertStatus.hidden = true;
+    emailAlertStatusMessage.textContent = '';
+    emailAlertAvailability.textContent = '';
+    const email = document.querySelector('#alert-email').value.trim();
+    try {
+      const response = await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not request email alerts.');
+      emailAlertStatusMessage.textContent = /already subscribed/i.test(data.message || '')
+        ? `${email} is already subscribed to result alerts.`
+        : `We sent a confirmation email to ${email}. Open it and click “Confirm subscription” to start receiving alerts.`;
+      emailAlertStatus.hidden = false;
+      emailAlertForm.reset();
+    } catch (error) {
+      emailAlertAvailability.textContent = error.message;
+    } finally {
+      emailAlertButton.innerHTML = buttonText;
+      emailAlertButton.disabled = !emailAlertsEnabled;
+    }
+  });
+  document.querySelector('#email-alert-status-close').addEventListener('click', () => {
+    emailAlertStatus.hidden = true;
+  });
 }
 
 if (adSlot) {

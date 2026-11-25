@@ -217,50 +217,18 @@
 
         <div class="admin-card admin-tile subscribers-card">
           <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-subscribers" data-tile-target="tile-subscribers">
-            <span class="tile-title-wrap"><span class="eyebrow">PREMIUM</span><span id="subscribers-heading" class="tile-title">Manage Subscribers</span></span>
+            <span class="tile-title-wrap"><span class="eyebrow">EMAIL ALERTS</span><span id="subscribers-heading" class="tile-title">Subscribers list</span></span>
           </button>
           <div id="tile-subscribers" class="admin-tile-modal" hidden>
             <div class="admin-tile-backdrop" data-tile-close></div>
-            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="subscribers-heading" style="max-width:1200px">
+            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="subscribers-heading">
               <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
-              <div class="admin-tile-panel-head"><span class="eyebrow">PREMIUM EMAIL ALERTS</span><h2 class="admin-tile-panel-title">Manage Subscribers</h2></div>
+              <div class="admin-tile-panel-head"><span class="eyebrow">EMAIL ALERTS</span><h2 class="admin-tile-panel-title">Subscribers list</h2></div>
               <div class="admin-tile-content">
-                <p>Board exam results remain free. Manage ₱20/month Premium Email Alerts subscribers, payments, and email alert history here.</p>
-                <div id="premium-stats" class="subscriber-toolbar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px"></div>
-                <details style="margin-bottom:16px"><summary style="cursor:pointer;font-weight:600">Add / Edit Subscriber</summary>
-                  <form id="premium-subscriber-form" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:12px">
-                    <input type="hidden" id="ps-mode" value="add">
-                    <label>Full Name<input id="ps-fullName" maxlength="120"></label>
-                    <label>Email Address<input id="ps-email" type="email" required maxlength="254"></label>
-                    <label>Website Account/User ID<input id="ps-userId" maxlength="120" placeholder="Optional"></label>
-                    <label>Subscription Start Date<input id="ps-startDate" type="date"></label>
-                    <label>Subscription Duration (months)<input id="ps-durationMonths" type="number" min="1" value="1"></label>
-                    <label>Subscription Expiration Date<input id="ps-expirationDate" type="date"></label>
-                    <label>Amount Paid<input id="ps-amountPaid" type="number" min="0" step="0.01" value="20"></label>
-                    <label>Payment Method<select id="ps-paymentMethod"><option>Ganap</option><option>GCash</option><option>Bank Transfer</option><option>Cash</option><option>Other</option><option>Complimentary</option></select></label>
-                    <label>Payment Reference Number<input id="ps-paymentReference" maxlength="200"></label>
-                    <label>Payment Status<select id="ps-paymentStatus"><option>Paid</option><option>Pending</option><option>Complimentary</option></select></label>
-                    <label>Subscription Status<select id="ps-subscriptionStatus"><option value="active">Active</option><option value="expired">Expired</option><option value="cancelled">Cancelled</option><option value="pending">Pending</option></select></label>
-                    <label style="grid-column:1/-1">Admin Notes<textarea id="ps-adminNotes" rows="2" maxlength="2000"></textarea></label>
-                    <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap"><button type="submit" id="ps-save">Save subscriber</button><button type="button" id="ps-reset" class="secondary-button">Reset form</button><span id="ps-status" class="status" role="status" aria-live="polite"></span></div>
-                  </form>
-                </details>
-                <div class="subscriber-toolbar"><div class="subscriber-search-control"><label for="subscriber-search">Search subscribers</label><input id="subscriber-search" type="search" placeholder="Search by name or email…" autocomplete="off"></div><div class="subscriber-list-controls"><label for="subscriber-status-filter">Status</label><select id="subscriber-status-filter"><option value="all">All</option><option value="active">Active</option><option value="expired">Expired</option><option value="pending">Pending</option><option value="cancelled">Cancelled</option></select><label for="subscriber-sort">Sort</label><select id="subscriber-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="expiring">Expiring soon</option></select></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" id="premium-export" class="secondary-button">Export CSV</button><button type="button" id="premium-refresh" class="secondary-button">Refresh</button></div><span id="subscriber-count" class="subscriber-count" aria-live="polite"></span></div>
-                <div class="table-scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Payment</th><th>Amount</th><th>Payment Status</th><th>Subscription</th><th>Start</th><th>Expiration</th><th>Alerts</th><th>Actions</th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscribers match this filter.</p></div>
+                <p>Search the alert list, resend the latest result to a confirmed subscriber, or manually unsubscribe someone who asks.</p>
+                <div class="subscriber-toolbar"><div class="subscriber-search-control"><label for="subscriber-search">Search subscriber emails</label><input id="subscriber-search" type="search" placeholder="Search by email address…" autocomplete="off"></div><div class="subscriber-list-controls"><label for="subscriber-sort">Sort by</label><select id="subscriber-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></div><span id="subscriber-count" class="subscriber-count" aria-live="polite"></span></div>
+                <div class="table-scroll"><table><thead><tr><th scope="col">Email address</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Subscriber actions</span></th></tr></thead><tbody id="subscriber-rows"></tbody></table><p id="subscriber-empty" class="empty-list" hidden>No subscriber emails match this search.</p></div>
                 <nav id="subscriber-pagination" class="subscriber-pagination" aria-label="Subscriber list pages" hidden></nav>
-                <details style="margin-top:16px"><summary style="cursor:pointer;font-weight:600">Payment config / prepaid options</summary>
-                  <p class="muted" style="margin:8px 0">Ganap requires a minimum ₱200 charge. Keep a prepaid option that preserves the ₱20/month equivalent and disclose it before checkout.</p>
-                  <div style="display:grid;gap:8px;max-width:720px">
-                    <label><input type="checkbox" id="premium-ganap-enabled"> Enable Ganap checkout when configured</label>
-                    <label>Prepaid options (one per line: label | months | amount)<textarea id="premium-prepaid-options" rows="4" placeholder="Leave empty for monthly-only ₱20 subscription"></textarea></label>
-                    <label>Alternative manual methods (comma separated)<input id="premium-alt-methods" placeholder="GCash, Bank Transfer, Cash, Other"></label>
-                    <div style="display:flex;gap:8px"><button type="button" id="premium-config-save" class="secondary-button">Save config</button><span id="premium-config-status" class="status"></span></div>
-                  </div>
-                </details>
-                <details style="margin-top:16px"><summary style="cursor:pointer;font-weight:600">Email alert log / audit log</summary>
-                  <div style="display:flex;gap:8px;margin:10px 0"><button type="button" id="premium-load-audit" class="secondary-button">Load audit log</button><button type="button" id="premium-load-email-log" class="secondary-button">Load email log</button></div>
-                  <pre id="premium-log-output" style="white-space:pre-wrap;max-height:260px;overflow:auto;background:#f6f9fc;padding:12px;border-radius:8px;font-size:12px"></pre>
-                </details>
               </div>
             </section>
           </div>

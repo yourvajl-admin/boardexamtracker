@@ -106,17 +106,19 @@
     <section class="section" aria-label="Result alerts and PRC archives">
       <div class="wrap duo">
         <div class="panel panel-cta" id="email-alert-section">
-          <span class="panel-icon"><i class="ph ph-bell-ringing" aria-hidden="true"></i></span>
+          <span class="panel-icon"><i class="ph ph-bell" aria-hidden="true"></i></span>
           <div class="panel-body">
-            <h2>Premium Email Alerts</h2>
-            <p>BoardExamTracker is free to use for checking board exam results. Subscribe for only ₱20/month to receive email alerts whenever new board exam results are released.</p>
-            <ul class="cta-points"><li><i class="ph ph-check-circle" aria-hidden="true"></i>₱20/month</li><li><i class="ph ph-check-circle" aria-hidden="true"></i>New result alerts</li><li><i class="ph ph-check-circle" aria-hidden="true"></i>Cancel anytime</li></ul>
-            <div class="inline-form">
-              <a class="btn btn-primary" href="/account?plan=premium">Subscribe for ₱20/month <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
-              <a class="btn btn-outline" href="/account">Manage account</a>
-            </div>
-            <p id="email-alert-availability" class="form-note" aria-live="polite">Checking subscription availability…</p>
-            <small class="form-note-small">Board exam results remain free for everyone. Premium only adds email alerts.</small>
+            <h2>Get result alerts</h2>
+            <p>We’ll email you when a new announcement appears in the public PRC Exam Results feed. Confirm your email to subscribe. Unsubscribe any time.</p>
+            <ul class="cta-points"><li><i class="ph ph-check-circle" aria-hidden="true"></i>Free</li><li><i class="ph ph-check-circle" aria-hidden="true"></i>New PRC results only</li><li><i class="ph ph-check-circle" aria-hidden="true"></i>Confirm by email</li></ul>
+            <form id="email-alert-form" class="inline-form">
+              <label class="sr-only" for="alert-email">Email address</label>
+              <input id="alert-email" class="field" name="email" type="email" autocomplete="email" placeholder="Enter your email address" required maxlength="254">
+              <button class="btn btn-primary" type="submit" disabled>Subscribe <i class="ph ph-arrow-right" aria-hidden="true"></i></button>
+              <div id="email-alert-status" class="alert-popup" role="status" aria-live="polite" hidden><i class="ph ph-check-circle" aria-hidden="true"></i><span id="email-alert-status-message"></span><button id="email-alert-status-close" type="button" aria-label="Close email confirmation message"><i class="ph ph-x" aria-hidden="true"></i></button></div>
+            </form>
+            <p id="email-alert-availability" class="form-note" aria-live="polite">Checking email alert availability…</p>
+            <small class="form-note-small">Your address is used only for result alerts and confirmation.</small>
           </div>
         </div>
         <div class="panel" id="archives">
