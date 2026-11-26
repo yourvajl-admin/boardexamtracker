@@ -21,14 +21,6 @@ const blogPostBody = document.querySelector('#blog-post-body');
 const blogPhotoInput = document.querySelector('#blog-post-photo');
 const blogPhotoPreview = document.querySelector('#blog-photo-preview');
 const removeBlogPhotoButton = document.querySelector('#remove-blog-photo');
-const donationForm = document.querySelector('#donation-form');
-const donationQrInput = document.querySelector('#donation-qr-input');
-const donationCurrentPreview = document.querySelector('#donation-current-preview');
-const donationSelectedPreview = document.querySelector('#donation-selected-preview');
-const donationCurrentStatus = document.querySelector('#donation-current-status');
-const donationStatus = document.querySelector('#donation-status');
-const donationSaveButton = document.querySelector('#donation-save-button');
-const donationRemoveButton = document.querySelector('#donation-remove-button');
 const outfitForm = document.querySelector('#outfit-form');
 const outfitIdInput = document.querySelector('#outfit-id');
 const outfitTitleInput = document.querySelector('#outfit-title');
@@ -47,8 +39,6 @@ let blogPosts = [];
 let editingBlogPost = null;
 let removeExistingBlogPhoto = false;
 let blogPhotoObjectUrl = null;
-let donationSelectedObjectUrl = null;
-let donationHasQr = false;
 let outfits = [];
 let editingOutfitId = null;
 let outfitSelectedObjectUrl = null;
@@ -227,153 +217,6 @@ async function refreshViewerCount() {
     label.textContent = error.message;
   }
 }
-
-function setDonationStatus(message, type = '') {
-  donationStatus.textContent = message;
-  donationStatus.className = `status ${type}`.trim();
-}
-
-function clearDonationSelectedPreview() {
-  if (donationSelectedObjectUrl) URL.revokeObjectURL(donationSelectedObjectUrl);
-  donationSelectedObjectUrl = null;
-  donationQrInput.value = '';
-  donationSelectedPreview.innerHTML = '<p class="donation-preview-empty">No new image selected.</p>';
-}
-
-function renderDonationCurrentPreview(data) {
-  donationHasQr = Boolean(data.hasQr && data.qrImageUrl);
-  donationCurrentPreview.replaceChildren();
-  if (donationHasQr) {
-    const img = document.createElement('img');
-    img.src = data.qrImageUrl;
-    img.alt = 'Current donation QR code';
-    img.loading = 'lazy';
-    donationCurrentPreview.append(img);
-    const updated = data.updatedAt ? new Date(data.updatedAt).toLocaleString() : 'recently';
-    donationCurrentStatus.textContent = `QR code uploaded · Updated ${updated}`;
-  } else {
-    const empty = document.createElement('p');
-    empty.className = 'donation-preview-empty';
-    empty.textContent = 'No QR code uploaded.';
-    donationCurrentPreview.append(empty);
-    donationCurrentStatus.textContent = 'No QR code uploaded. The QR section is hidden on the public donation pop-up.';
-  }
-  donationRemoveButton.disabled = !donationHasQr;
-  donationSaveButton.disabled = false;
-}
-
-async function loadDonationSettings() {
-  setDonationStatus('');
-  try {
-    const data = await request('/api/admin/donation');
-    if (data.persistentStorage === false) {
-      donationCurrentStatus.textContent = 'Shared storage is required to manage the donation QR code.';
-      donationSaveButton.disabled = true;
-      donationRemoveButton.disabled = true;
-      donationCurrentPreview.innerHTML = '<p class="donation-preview-empty">Persistent storage is not configured.</p>';
-      setDonationStatus('Configure Upstash Redis REST credentials to upload, replace, or remove the donation QR code.', 'bad');
-      return;
-    }
-    renderDonationCurrentPreview(data);
-  } catch (error) {
-    donationCurrentStatus.textContent = 'Could not load donation settings.';
-    donationSaveButton.disabled = true;
-    donationRemoveButton.disabled = true;
-    setDonationStatus(error.message, 'bad');
-  }
-}
-
-async function compressDonationQr(file) {
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-    throw new Error('Choose a JPG, PNG, or WebP QR code image.');
-  }
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 1200 / bitmap.width, 1200 / bitmap.height);
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext('2d', { alpha: false, colorSpace: 'srgb' });
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  let blob;
-  for (const quality of [0.92, 0.86, 0.8, 0.72, 0.64]) {
-    blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
-    if (blob && blob.size <= 950_000) break;
-  }
-  if (!blob || blob.size > 1_000_000) throw new Error('This QR code image is too large to optimize. Choose a smaller image.');
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('Could not read the selected QR code image.'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-donationQrInput.addEventListener('change', () => {
-  const file = donationQrInput.files?.[0];
-  if (donationSelectedObjectUrl) URL.revokeObjectURL(donationSelectedObjectUrl);
-  donationSelectedObjectUrl = null;
-  donationSelectedPreview.replaceChildren();
-  if (!file) {
-    donationSelectedPreview.innerHTML = '<p class="donation-preview-empty">No new image selected.</p>';
-    return;
-  }
-  donationSelectedObjectUrl = URL.createObjectURL(file);
-  const img = document.createElement('img');
-  img.src = donationSelectedObjectUrl;
-  img.alt = 'Selected donation QR code preview';
-  donationSelectedPreview.append(img);
-});
-
-donationForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const file = donationQrInput.files?.[0];
-  if (!file) {
-    setDonationStatus('Select a QR code image to preview and save.', 'bad');
-    return;
-  }
-  donationSaveButton.disabled = true;
-  donationRemoveButton.disabled = true;
-  setDonationStatus('Saving QR code…');
-  try {
-    const image = await compressDonationQr(file);
-    const data = await request('/api/admin/donation/qr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image }),
-    });
-    renderDonationCurrentPreview(data);
-    clearDonationSelectedPreview();
-    setDonationStatus('Donation QR code saved. The public donation pop-up will show the updated image.', 'good');
-  } catch (error) {
-    setDonationStatus(error.message, 'bad');
-  } finally {
-    donationSaveButton.disabled = false;
-    donationRemoveButton.disabled = !donationHasQr;
-  }
-});
-
-donationRemoveButton.addEventListener('click', async () => {
-  if (!donationHasQr) return;
-  if (!window.confirm('Remove the donation QR code from the public donation pop-up?')) return;
-  donationSaveButton.disabled = true;
-  donationRemoveButton.disabled = true;
-  setDonationStatus('Removing QR code…');
-  try {
-    const data = await request('/api/admin/donation/qr', { method: 'DELETE' });
-    renderDonationCurrentPreview(data);
-    clearDonationSelectedPreview();
-    setDonationStatus('Donation QR code removed. The QR section is now hidden on the public donation pop-up.', 'good');
-  } catch (error) {
-    setDonationStatus(error.message, 'bad');
-  } finally {
-    donationSaveButton.disabled = false;
-    donationRemoveButton.disabled = !donationHasQr;
-  }
-});
-
 
 function renderAdsControl(data) {
   adsToggleButton.setAttribute('aria-pressed', String(data.enabled));
@@ -626,7 +469,6 @@ async function loadDashboard() {
       setDashboardStatus('Only admins can see this list. A manual unsubscribe removes the address from future alerts.', 'good');
     }
     await loadAdsControl();
-    await loadDonationSettings();
     await refreshViewerCount();
     await loadAdminBlogPosts();
     await loadAdminOutfits();

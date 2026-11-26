@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#101b2c">
   <title>Admin | BoardExamTracker</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/admin.css?v=20261123-5">
-  <script src="/admin.js?v=20261123-5" defer></script>
+  <link rel="stylesheet" href="/admin.css?v=20261126-1">
+  <script src="/admin.js?v=20261126-1" defer></script>
 </head>
 <body>
   <main class="admin-shell">
@@ -82,47 +82,6 @@
                     <p>A newly detected exam result turns ads off automatically. Turn them on again here when ready.</p>
                   </div>
                   <button id="ads-toggle-button" class="ads-toggle-button" type="button" aria-pressed="false" disabled>Loading…</button>
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <div class="admin-card admin-tile donation-settings-panel">
-          <button type="button" class="admin-tile-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="tile-donation" data-tile-target="tile-donation">
-            <span class="tile-title-wrap"><span class="eyebrow">SUPPORT</span><span id="donation-settings-heading" class="tile-title">Donation Settings</span></span>
-          </button>
-          <div id="tile-donation" class="admin-tile-modal" hidden>
-            <div class="admin-tile-backdrop" data-tile-close></div>
-            <section class="admin-tile-panel" role="dialog" aria-modal="true" aria-labelledby="donation-settings-heading">
-              <button type="button" class="admin-tile-close" data-tile-close aria-label="Close">×</button>
-              <div class="admin-tile-panel-head"><span class="eyebrow">SUPPORT</span><h2 class="admin-tile-panel-title">Donation Settings</h2></div>
-              <div class="admin-tile-content">
-                <div class="donation-settings-heading">
-                  <div>
-                    <p>Manage the QR code shown in the public donation pop-up. Uploading or removing a QR code updates the website automatically.</p>
-                  </div>
-                  <p id="donation-current-status" class="donation-current-status" role="status" aria-live="polite">Checking donation settings…</p>
-                </div>
-                <div class="donation-settings-grid">
-                  <div class="donation-preview-card">
-                    <h3>Current QR code</h3>
-                    <div id="donation-current-preview" class="donation-qr-preview" aria-live="polite"><p class="donation-preview-empty">No QR code uploaded.</p></div>
-                  </div>
-                  <form id="donation-form" class="donation-form">
-                    <label for="donation-qr-input">Upload or replace QR code image</label>
-                    <input id="donation-qr-input" name="qr" type="file" accept="image/jpeg,image/png,image/webp">
-                    <small class="donation-help">JPG, PNG, or WebP. Maximum 1 MB. Preview the selected image below before saving.</small>
-                    <div class="donation-preview-card donation-selected-card">
-                      <h3>Preview before saving</h3>
-                      <div id="donation-selected-preview" class="donation-qr-preview"><p class="donation-preview-empty">No new image selected.</p></div>
-                    </div>
-                    <div class="donation-actions">
-                      <button id="donation-save-button" type="submit">Save QR code</button>
-                      <button id="donation-remove-button" class="unsubscribe-button" type="button" disabled>Remove QR code</button>
-                    </div>
-                    <p id="donation-status" class="status" role="status" aria-live="polite"></p>
-                  </form>
                 </div>
               </div>
             </section>
